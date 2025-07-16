@@ -3,5 +3,6 @@ main = "src/index.ts"
 compatibility_date = "2024-05-25"
 node_compat = true
 kv_namespaces = [
-  { binding = "USER_PAT_STORE", id = "8b99c8c064fc4eadb803d6018f4516b9", preview_id = "8b99c8c064fc4eadb803d6018f4516b9" }
+  { binding = "USER_PAT_STORE", id = "8b99c8c064fc4eadb803d6018f4516b9", preview_id = "8b99c8c064fc4eadb803d6018f4516b9" },
+  { binding = "USER_REPO_STORE", id = "3ba5ec05252d481388ab12ef71d28f56", preview_id = "3ba5ec05252d481388ab12ef71d28f56" }
 ]
