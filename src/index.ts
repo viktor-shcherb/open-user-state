@@ -4,8 +4,9 @@
  * The worker provides GitHub authentication endpoints and
  * persists user Personal Access Tokens (PATs) in a KV store.
  * Users can also select a repository for state storage and
- * read or commit files to that repository. All tokens are XOR
- * encrypted with a secret before storage.
+ * read or commit files to that repository. Personal access tokens are
+ * encrypted at rest using AES‑GCM. Keys are derived from
+ * `ENCRYPTION_SECRET` via PBKDF2 so brute‑force attempts are slowed.
  */
 
 export interface Env {
@@ -15,7 +16,7 @@ export interface Env {
   GITHUB_CLIENT_SECRET: string;
   /** Redirect URI configured in the OAuth app */
   GITHUB_REDIRECT_URI: string;
-  /** Symmetric key used to obfuscate PATs before persistence */
+  /** Secret used to derive per-token encryption keys */
   ENCRYPTION_SECRET: string;
   /** KV namespace for storing encrypted PATs */
   USER_PAT_STORE: KVNamespace;
@@ -38,45 +39,87 @@ function parseCookies(header: string | null): Record<string, string> {
 }
 
 // ---- PAT Encryption --------------------------------------------------------
-// PATs are not stored in plaintext. We apply a simple XOR with a secret which
-// offers light obfuscation without heavy crypto dependencies. The same secret
-// must be used to decrypt the value later.
-function encrypt(pat: string, secret: string): string {
-  const enc = new TextEncoder();
-  const patBytes = enc.encode(pat);
-  const secretBytes = enc.encode(secret);
-  const out = new Uint8Array(patBytes.length);
-  for (let i = 0; i < patBytes.length; i++) {
-    out[i] = patBytes[i] ^ secretBytes[i % secretBytes.length];
-  }
+// Tokens are encrypted with AES-GCM to ensure both confidentiality and
+// integrity. PBKDF2 is used to derive a key from the provided secret which slows
+// brute-force attempts. Each token uses a fresh random salt and IV.
+
+const SALT_LEN = 16; // 128-bit salt for PBKDF2
+const IV_LEN = 12; // 96-bit nonce for AES-GCM
+
+async function deriveKey(secret: string, salt: Uint8Array): Promise<CryptoKey> {
+  const baseKey = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(secret),
+    'PBKDF2',
+    false,
+    ['deriveKey'],
+  );
+  return crypto.subtle.deriveKey(
+    { name: 'PBKDF2', salt, iterations: 100000, hash: 'SHA-256' },
+    baseKey,
+    { name: 'AES-GCM', length: 256 },
+    false,
+    ['encrypt', 'decrypt'],
+  );
+}
+
+/**
+ * Encrypts a Personal Access Token using AES-GCM and a key derived via PBKDF2.
+ * AES-GCM provides confidentiality and integrity while PBKDF2 slows brute
+ * force of the secret.
+ */
+export async function encryptPAT(pat: string, secret: string): Promise<string> {
+  const salt = crypto.getRandomValues(new Uint8Array(SALT_LEN));
+  const iv = crypto.getRandomValues(new Uint8Array(IV_LEN));
+  const key = await deriveKey(secret, salt);
+  const cipher = await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv },
+    key,
+    new TextEncoder().encode(pat),
+  );
+  const out = new Uint8Array(salt.length + iv.length + cipher.byteLength);
+  out.set(salt);
+  out.set(iv, salt.length);
+  out.set(new Uint8Array(cipher), salt.length + iv.length);
   return btoa(String.fromCharCode(...out));
 }
 
-// Reverses the XOR encryption when reading a PAT from storage.
-function decrypt(cipher: string, secret: string): string {
-  const data = Uint8Array.from(atob(cipher), c => c.charCodeAt(0));
-  const secretBytes = new TextEncoder().encode(secret);
-  const out = new Uint8Array(data.length);
-  for (let i = 0; i < data.length; i++) {
-    out[i] = data[i] ^ secretBytes[i % secretBytes.length];
+/**
+ * Decrypts a token previously encrypted with {@link encryptPAT}. Throws when
+ * authentication fails so callers can respond with `401 Unauthorized`.
+ */
+export async function decryptPAT(data: string, secret: string): Promise<string> {
+  const buf = Uint8Array.from(atob(data), c => c.charCodeAt(0));
+  if (buf.length < SALT_LEN + IV_LEN) throw new Error('cipher too short');
+  const salt = buf.slice(0, SALT_LEN);
+  const iv = buf.slice(SALT_LEN, SALT_LEN + IV_LEN);
+  const cipher = buf.slice(SALT_LEN + IV_LEN);
+  const key = await deriveKey(secret, salt);
+  try {
+    const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, cipher);
+    return new TextDecoder().decode(plain);
+  } catch {
+    throw new Error('auth fail');
   }
-  return new TextDecoder().decode(out);
 }
 
 // ---- Token Persistence -----------------------------------------------------
-// Persist the encrypted PAT in Workers KV using the user id as a key.
+// Tokens are stored encrypted in Workers KV. The encryption occurs inside this
+// helper to avoid accidentally persisting plaintext.
 async function storeToken(
   userId: string,
-  encrypted: string,
+  pat: string,
   env: Env,
 ): Promise<void> {
-  await env.USER_PAT_STORE.put(userId, encrypted);
+  const enc = await encryptPAT(pat, env.ENCRYPTION_SECRET);
+  await env.USER_PAT_STORE.put(userId, enc);
 }
 
-// Retrieve and decrypt the PAT for the given user if it exists.
+// Retrieve and decrypt the PAT for the given user if it exists. Decryption
+// errors bubble up so callers can return 401 Unauthorized.
 async function getToken(userId: string, env: Env): Promise<string | null> {
   const enc = await env.USER_PAT_STORE.get(userId);
-  return enc ? decrypt(enc, env.ENCRYPTION_SECRET) : null;
+  return enc ? decryptPAT(enc, env.ENCRYPTION_SECRET) : null;
 }
 
 // ---- Repository Preferences ------------------------------------------------
@@ -259,8 +302,7 @@ export default {
       if (typeof pat !== 'string' || pat.length === 0) {
         return new Response('Invalid token', { status: 400 });
       }
-      const encrypted = encrypt(pat, env.ENCRYPTION_SECRET);
-      await storeToken(userId, encrypted, env);
+      await storeToken(userId, pat, env);
       return new Response(null, { status: 204 });
     }
 
@@ -300,7 +342,12 @@ export default {
       const cookies = parseCookies(request.headers.get('Cookie'));
       const userId = cookies['session'];
       if (!userId) return new Response('Unauthorized', { status: 401 });
-      const token = await getToken(userId, env);
+      let token: string | null;
+      try {
+        token = await getToken(userId, env);
+      } catch {
+        return new Response('Unauthorized', { status: 401 });
+      }
       const repo = await getRepo(userId, env);
       if (!token || !repo) return new Response('No repository or token', { status: 400 });
       let body: any;
@@ -329,7 +376,12 @@ export default {
       const cookies = parseCookies(request.headers.get('Cookie'));
       const userId = cookies['session'];
       if (!userId) return new Response('Unauthorized', { status: 401 });
-      const token = await getToken(userId, env);
+      let token: string | null;
+      try {
+        token = await getToken(userId, env);
+      } catch {
+        return new Response('Unauthorized', { status: 401 });
+      }
       const repo = await getRepo(userId, env);
       if (!token || !repo) return new Response('No repository or token', { status: 400 });
       const path = url.searchParams.get('path');
