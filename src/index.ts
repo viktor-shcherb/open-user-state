@@ -1,10 +1,27 @@
+/**
+ * Entry module for the Cloudflare Worker backend.
+ *
+ * The worker provides GitHub authentication endpoints and
+ * persists user Personal Access Tokens (PATs) in a KV store.
+ * All tokens are XOR encrypted with a secret before storage.
+ */
+
 export interface Env {
+  /** GitHub OAuth app identifier */
   GITHUB_CLIENT_ID: string;
+  /** Secret used during the OAuth token exchange */
   GITHUB_CLIENT_SECRET: string;
+  /** Redirect URI configured in the OAuth app */
   GITHUB_REDIRECT_URI: string;
+  /** Symmetric key used to obfuscate PATs before persistence */
   ENCRYPTION_SECRET: string;
+  /** KV namespace for storing encrypted PATs */
+  USER_PAT_STORE: KVNamespace;
 }
 
+// ---- Cookie Utilities ------------------------------------------------------
+// Minimal parser used to read session and state cookies. The implementation
+// avoids allocations by splitting the header manually.
 function parseCookies(header: string | null): Record<string, string> {
   if (!header) return {};
   const out: Record<string, string> = {};
@@ -16,6 +33,10 @@ function parseCookies(header: string | null): Record<string, string> {
   return out;
 }
 
+// ---- PAT Encryption --------------------------------------------------------
+// PATs are not stored in plaintext. We apply a simple XOR with a secret which
+// offers light obfuscation without heavy crypto dependencies. The same secret
+// must be used to decrypt the value later.
 function encrypt(pat: string, secret: string): string {
   const enc = new TextEncoder();
   const patBytes = enc.encode(pat);
@@ -27,13 +48,23 @@ function encrypt(pat: string, secret: string): string {
   return btoa(String.fromCharCode(...out));
 }
 
-async function storeToken(userId: string, encrypted: string): Promise<void> {
-  // Placeholder for secure storage implementation
-  // Implement secure persistence such as Workers KV or a database.
-  // Intentionally left blank in this example.
+// ---- Token Persistence -----------------------------------------------------
+// Persist the encrypted PAT in Workers KV using the user id as a key.
+async function storeToken(
+  userId: string,
+  encrypted: string,
+  env: Env,
+): Promise<void> {
+  await env.USER_PAT_STORE.put(userId, encrypted);
 }
 
-async function authenticateWithGitHub(code: string, env: Env): Promise<{ id: string; login: string }> {
+// ---- GitHub OAuth ---------------------------------------------------------
+// Exchanges the OAuth `code` for a GitHub access token and retrieves the user
+// profile. Only the user id and login are returned for session creation.
+async function authenticateWithGitHub(
+  code: string,
+  env: Env,
+): Promise<{ id: string; login: string }> {
   const params = new URLSearchParams({
     client_id: env.GITHUB_CLIENT_ID,
     client_secret: env.GITHUB_CLIENT_SECRET,
@@ -58,6 +89,9 @@ async function authenticateWithGitHub(code: string, env: Env): Promise<{ id: str
   return { id: String(user.id), login: user.login };
 }
 
+// ---- Request Router -------------------------------------------------------
+// Handles all HTTP endpoints required by the frontend. The router is kept
+// simple as the worker only exposes a handful of routes.
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
@@ -68,6 +102,8 @@ export default {
       });
     }
 
+    // ---- OAuth Flow: Step 1 ------------------------------------------------
+    // Redirect the user to GitHub with a state parameter to prevent CSRF.
     if (url.pathname === '/api/auth/github' && request.method === 'POST') {
       const state = crypto.randomUUID();
       const redirect = `https://github.com/login/oauth/authorize?client_id=${env.GITHUB_CLIENT_ID}&redirect_uri=${env.GITHUB_REDIRECT_URI}&scope=user:email&state=${state}`;
@@ -76,6 +112,9 @@ export default {
       return new Response(null, { status: 302, headers });
     }
 
+    // ---- OAuth Flow: Step 2 ------------------------------------------------
+    // GitHub redirects back here with the "code" which we exchange for
+    // an access token and create a session cookie.
     if (url.pathname === '/api/auth/github/callback' && request.method === 'GET') {
       const params = url.searchParams;
       const code = params.get('code');
@@ -95,6 +134,8 @@ export default {
       }
     }
 
+    // ---- Store PAT ---------------------------------------------------------
+    // Accepts an encrypted PAT from the frontend and stores it in KV.
     if (url.pathname === '/api/token' && request.method === 'POST') {
       const cookies = parseCookies(request.headers.get('Cookie'));
       const userId = cookies['session'];
@@ -110,7 +151,7 @@ export default {
         return new Response('Invalid token', { status: 400 });
       }
       const encrypted = encrypt(pat, env.ENCRYPTION_SECRET);
-      await storeToken(userId, encrypted);
+      await storeToken(userId, encrypted, env);
       return new Response(null, { status: 204 });
     }
 

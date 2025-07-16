@@ -56,5 +56,5 @@ await fetch('/api/token', {
 });
 ```
 
-The token will be encrypted and stored securely using the worker's storage
-mechanism.
+The token will be encrypted and stored securely in the worker's `user-pat-store`
+KV namespace.
