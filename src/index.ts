@@ -25,9 +25,10 @@ export interface Env {
 }
 
 // ---- Cookie Utilities ------------------------------------------------------
-// Minimal parser used to read session and state cookies. The implementation
-// avoids allocations by splitting the header manually.
-function parseCookies(header: string | null): Record<string, string> {
+// Minimal parser used to read session and state cookies. It keeps
+// allocations to a minimum by splitting the header manually instead of
+// relying on a heavier cookie library.
+export function parseCookies(header: string | null): Record<string, string> {
   if (!header) return {};
   const out: Record<string, string> = {};
   const parts = header.split(';');

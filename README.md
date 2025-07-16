@@ -1,5 +1,8 @@
 # Open User State Backend
 
+[![Coverage](https://codecov.io/gh/viktor-shcherb/open-user-state/branch/main/graph/badge.svg)](https://codecov.io/gh/viktor-shcherb/open-user-state)
+[![Backend Status](https://img.shields.io/website?url=https%3A%2F%2Fopen-user-state-personal-website.viktoroo-sch.workers.dev%2Fapi%2Fhealth)](https://open-user-state-personal-website.viktoroo-sch.workers.dev/api/health)
+
 This project hosts a Cloudflare Worker that serves as a backend for
 [frontend](https://github.com/viktor-shcherb/viktor-shcherb.github.io). The aim
 is to authenticate users via GitHub and sync editor state to a repository using
@@ -12,6 +15,12 @@ Install dependencies and start a local dev server:
 ```bash
 npm install
 npm run dev
+```
+
+Run the test suite with coverage:
+
+```bash
+npm run coverage
 ```
 
 ### `GET /api/health`
