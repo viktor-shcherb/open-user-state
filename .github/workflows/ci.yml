@@ -18,4 +18,5 @@ jobs:
       - uses: codecov/codecov-action@v3
         with:
           files: ./coverage/coverage-final.json
+          slug: viktor-shcherb/open-user-state
           token: ${{ secrets.CODECOV_TOKEN }}
