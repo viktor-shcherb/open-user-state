@@ -1,8 +1,8 @@
 {
-  "name": "gh-bff-worker",
+  "name": "open-user-state",
   "version": "1.0.0",
   "description": "Cloudflare Worker for GitHub OAuth and repo state management",
-  "main": "index.js",
+  "main": "src/index.ts",
   "scripts": {
     "dev": "wrangler dev",
     "build": "wrangler build",
@@ -11,7 +11,8 @@
   "author": "",
   "license": "MIT",
   "devDependencies": {
-    "wrangler": "^3.0.0"
+    "wrangler": "^3.0.0",
+    "typescript": "^5.0.0"
   },
   "dependencies": {
     "@cloudflare/workers-types": "^4.20230517.0"
