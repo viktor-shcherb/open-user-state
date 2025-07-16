@@ -14,13 +14,16 @@ npm install
 npm run dev
 ```
 
-`/api/health` returns a simple JSON payload which can be used by the frontend to
-check whether the backend is running.
+### `GET /api/health`
+
+Returns a small JSON payload `{ status: 'ok' }` which can be used by the
+frontend to verify that the backend is running.
 
 ## API Endpoints
 
 The worker exposes a small set of routes used by the frontend to authenticate
-with GitHub and store a Personal Access Token (PAT).
+with GitHub, store a Personal Access Token (PAT) and manage the repository
+where user state is kept.
 
 ### `POST /api/auth/github`
 
@@ -58,3 +61,27 @@ await fetch('/api/token', {
 
 The token will be encrypted and stored securely in the worker's `user-pat-store`
 KV namespace.
+
+### `POST /api/repository`
+
+Persists the GitHub repository where user state files will be written. The body
+must include `{ repo: 'owner/name' }` and the request requires a valid session
+cookie.
+
+### `GET /api/repository`
+
+Returns the currently selected repository for the authenticated user in the form
+`{ repo: string }`.
+
+### `POST /api/file`
+
+Commits a new text file to the selected repository. The JSON payload should
+include `path`, `content` and optionally a `message` used as the commit
+message. If the repository does not exist, it will be created automatically
+before committing the file.
+
+### `GET /api/file`
+
+Retrieves the raw text at the given `path` from the selected repository. The
+path is provided as a query parameter. When the file or repository is missing
+`content` will be `null` in the response.
