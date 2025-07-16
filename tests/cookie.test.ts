@@ -15,4 +15,9 @@ describe('parseCookies', () => {
   it('handles null header', () => {
     expect(parseCookies(null)).toEqual({});
   });
+
+  it('ignores malformed pairs', () => {
+    const header = 'a=1; invalid; b=2; c=';
+    expect(parseCookies(header)).toEqual({ a: '1', b: '2' });
+  });
 });

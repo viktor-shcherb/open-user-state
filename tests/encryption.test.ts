@@ -18,4 +18,8 @@ describe('encryptPAT/decryptPAT', () => {
     const enc = await encryptPAT('token', secret);
     await expect(decryptPAT(enc, 'wrong')).rejects.toThrow();
   });
+
+  it('rejects truncated data', async () => {
+    await expect(decryptPAT('', secret)).rejects.toThrow('cipher too short');
+  });
 });
