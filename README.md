@@ -1,3 +1,7 @@
+<!--
+  This README describes the Cloudflare Worker backend for Open User State.
+  It explains local development steps and documents the REST API used by the frontend.
+-->
 # Open User State Backend
 
 [![Coverage](https://codecov.io/gh/viktor-shcherb/open-user-state/branch/main/graph/badge.svg)](https://codecov.io/gh/viktor-shcherb/open-user-state)
@@ -7,6 +11,10 @@ This project hosts a Cloudflare Worker that serves as a backend for
 [frontend](https://github.com/viktor-shcherb/viktor-shcherb.github.io). The aim
 is to authenticate users via GitHub and sync editor state to a repository using
 a Personal Access Token (PAT).
+<!--
+  Development instructions demonstrate how to run the worker locally
+  and execute tests so contributors can verify changes quickly.
+-->
 
 ## Development
 
@@ -23,16 +31,20 @@ Run the test suite with coverage:
 npm run coverage
 ```
 
-### `GET /api/health`
-
-Returns a small JSON payload `{ status: 'ok' }` which can be used by the
-frontend to verify that the backend is running.
+<!--
+  The API Endpoints section catalogs each HTTP route exposed by the worker
+  so the frontend knows how to authenticate and store user state.
+-->
 
 ## API Endpoints
 
 The worker exposes a small set of routes used by the frontend to authenticate
 with GitHub, store a Personal Access Token (PAT) and manage the repository
 where user state is kept.
+### `GET /api/health`
+
+Returns a small JSON payload `{ status: 'ok' }` which can be used by the frontend to verify that the backend is running.
+
 
 ### `POST /api/auth/github`
 
