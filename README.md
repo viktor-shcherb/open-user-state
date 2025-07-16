@@ -1,6 +1,6 @@
 # Open User State Backend
 
-[![Coverage](https://codecov.io/gh/viktor-shcherb/open-user-state/branch/main/graph/badge.svg)](https://codecov.io/gh/viktor-shcherb/open-user-state)
+[![Coverage](https://codecov.io/gh/viktor-shcherb/open-user-state/branch/master/graph/badge.svg)](https://codecov.io/gh/viktor-shcherb/open-user-state)
 [![Backend Status](https://img.shields.io/website?url=https%3A%2F%2Fopen-user-state-personal-website.viktoroo-sch.workers.dev%2Fapi%2Fhealth)](https://open-user-state-personal-website.viktoroo-sch.workers.dev/api/health)
 
 This project hosts a Cloudflare Worker that serves as a backend for
