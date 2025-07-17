@@ -211,6 +211,26 @@ async function readFile(
   return atob(data.content.replace(/\n/g, ''));
 }
 
+// Lists the entries under a directory in the repository. This wraps the
+// GitHub contents API so the worker can expose a simple array of names to
+// the frontend while still honoring authentication and error handling.
+async function listFiles(
+  repo: string,
+  path: string,
+  token: string,
+): Promise<string[]> {
+  const [owner, name] = repo.split('/');
+  const url = `https://api.github.com/repos/${owner}/${name}/contents/${encodeURIComponent(path)}`;
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${token}`, 'User-Agent': 'open-user-state' },
+  });
+  if (res.status === 404) return [];
+  if (!res.ok) throw new Error('fetch failed');
+  const data = await res.json<any>();
+  if (!Array.isArray(data)) return [];
+  return data.map((entry: any) => entry.name as string);
+}
+
 // ---- GitHub OAuth ---------------------------------------------------------
 // Exchanges the OAuth `code` for a GitHub access token and retrieves the user
 // profile. Only the user id and login are returned for session creation.
@@ -394,6 +414,31 @@ export default {
         });
       } catch {
         return new Response('Read failed', { status: 500 });
+      }
+    }
+
+    // ---- Repository File Listing ---------------------------------------
+    // Returns the names of items under a directory in the configured repo.
+    if (url.pathname === '/api/files' && request.method === 'GET') {
+      const cookies = parseCookies(request.headers.get('Cookie'));
+      const userId = cookies['session'];
+      if (!userId) return new Response('Unauthorized', { status: 401 });
+      let token: string | null;
+      try {
+        token = await getToken(userId, env);
+      } catch {
+        return new Response('Unauthorized', { status: 401 });
+      }
+      const repo = await getRepo(userId, env);
+      if (!token || !repo) return new Response('No repository or token', { status: 400 });
+      const path = url.searchParams.get('path') || '';
+      try {
+        const entries = await listFiles(repo, path, token);
+        return new Response(JSON.stringify({ files: entries }), {
+          headers: { 'Content-Type': 'application/json' },
+        });
+      } catch {
+        return new Response('List failed', { status: 500 });
       }
     }
 

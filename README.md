@@ -106,3 +106,9 @@ before committing the file.
 Retrieves the raw text at the given `path` from the selected repository. The
 path is provided as a query parameter. When the file or repository is missing
 `content` will be `null` in the response.
+
+### `GET /api/files`
+
+Lists the files under a directory in the selected repository. Pass the
+`path` query parameter to specify the directory (or omit for the repo root).
+The response is an array like `{ files: string[] }` containing the entry names.
