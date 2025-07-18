@@ -59,49 +59,36 @@ async function handleHealth(): Promise<Response> {
   });
 }
 
-function short(v: string | null | undefined, n = 6) {
-  if (!v) return v;
-  return v.length <= n ? v : v.slice(0, n) + '…';
-}
+async function handleAuthStart(request: Request, env: Env): Promise<Response> {
+  const url = new URL(request.url);
+  const nextRaw = url.searchParams.get('next') || '/'; // default to root or a dashboard
+  // Security: allow only same-site relative paths (no scheme / host)
+  const next = /^\/[A-Za-z0-9._~\-\/?#=&]*$/.test(nextRaw) ? nextRaw : '/';
 
-function hash(value: string | null | undefined) {
-  if (!value) return value;
-  // Non-cryptographic short fingerprint just for correlation (DON'T use for security)
-  let h = 0;
-  for (let i = 0; i < value.length; i++) {
-    h = (h * 31 + value.charCodeAt(i)) | 0;
-  }
-  return (h >>> 0).toString(16);
-}
-
-async function handleAuthStart(env: Env, request?: Request): Promise<Response> {
   const state = crypto.randomUUID();
 
-  // Derive/validate redirect URI (optional improvement)
-  const configuredRedirect = env.GITHUB_REDIRECT_URI;
-  // You could normalize or derive from request if desired:
-  // const derivedRedirect = new URL('/api/auth/github/callback', request?.url || configuredRedirect).toString();
-
-  console.log('[AUTH]', 'START', {
-    state,
-    client: short(env.GITHUB_CLIENT_ID, 8),
-    redirectUri: configuredRedirect,
-  });
-
   const redirect =
-    `https://github.com/login/oauth/authorize` +
-    `?client_id=${encodeURIComponent(env.GITHUB_CLIENT_ID)}` +
-    `&redirect_uri=${encodeURIComponent(configuredRedirect)}` +
-    `&scope=` + encodeURIComponent('user:email') +
-    `&state=${encodeURIComponent(state)}`;
+    'https://github.com/login/oauth/authorize'
+    + `?client_id=${encodeURIComponent(env.GITHUB_CLIENT_ID)}`
+    + `&redirect_uri=${encodeURIComponent(env.GITHUB_REDIRECT_URI)}`
+    + `&scope=${encodeURIComponent('user:email')}`
+    + `&state=${encodeURIComponent(state)}`;
 
   const headers = new Headers({
     Location: redirect,
-    'Set-Cookie': `oauth_state=${state}; HttpOnly; Path=/; Secure; SameSite=Lax`,
-    'Cache-Control': 'no-store, max-age=0',
+    'Cache-Control': 'no-store, max-age=0'
   });
 
-  console.log('[AUTH]', 'REDIRECT', { to: redirect });
+  // Two cookies: oauth_state + oauth_next
+  headers.append(
+    'Set-Cookie',
+    `oauth_state=${state}; HttpOnly; Path=/; Secure; SameSite=Lax; Max-Age=300`
+  );
+  headers.append(
+    'Set-Cookie',
+    `oauth_next=${encodeURIComponent(next)}; HttpOnly; Path=/; Secure; SameSite=Lax; Max-Age=300`
+  );
+
   return new Response(null, { status: 302, headers });
 }
 
@@ -112,28 +99,11 @@ async function handleAuthCallback(request: Request, env: Env, url: URL): Promise
   const error   = params.get('error');
   const cookies = parseCookies(request.headers.get('Cookie') || '');
 
-  console.log('[AUTH]', 'CALLBACK_HIT', {
-    path: url.pathname,
-    hasCode: !!code,
-    statePrefix: short(state),
-    stateHash: hash(state),
-    cookieStatePrefix: short(cookies.oauth_state),
-    cookieStateHash: hash(cookies.oauth_state),
-    error,
-    search: url.search.slice(0, 120) + (url.search.length > 120 ? '…' : ''),
-  });
-
   if (error) {
-    console.log('[AUTH]', 'ERROR_PARAM', { error });
     return jsonError(400, 'GITHUB_ERROR');
   }
 
   if (!code || !state || !cookies.oauth_state) {
-    console.log('[AUTH]', 'MISSING_OAUTH_PARTS', {
-      hasCode: !!code,
-      hasState: !!state,
-      hasCookieState: !!cookies.oauth_state,
-    });
     return jsonError(400, 'MISSING_OAUTH');
   }
 
@@ -141,43 +111,36 @@ async function handleAuthCallback(request: Request, env: Env, url: URL): Promise
   const buf1 = new TextEncoder().encode(cookies.oauth_state);
   const buf2 = new TextEncoder().encode(state);
   if (!timingSafeEqual(buf1, buf2)) {
-    console.log('[AUTH]', 'STATE_MISMATCH', {
-      stateHash: hash(state),
-      cookieStateHash: hash(cookies.oauth_state),
-    });
     return jsonError(400, 'INVALID_OAUTH_STATE');
   }
 
-  console.log('[AUTH]', 'STATE_OK', {
-    stateHash: hash(state),
-  });
-
   try {
     const user = await authenticateWithGitHub(code, env);
-    console.log('[AUTH]', 'EXCHANGE_OK', {
-      userId: user.id,
-      login: user.login,
-      // No tokens logged.
-    });
 
     const sessionId = crypto.randomUUID();
     await env.SESSIONS.put(sessionId, JSON.stringify(user), {
       expirationTtl: 60 * 60 * 24 * 30,
     });
 
-    const headers = new Headers({
-      'Set-Cookie': [
-        `session=${sessionId}; HttpOnly; Path=/; Secure; SameSite=Lax`,
-        `oauth_state=; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=0`,
-      ].join(', '),
-    });
-    headers.set('Location', '/');
-
-    console.log('[AUTH]', 'SESSION_SET', { sessionId: short(sessionId, 12), userId: user.id });
+    const next = cookies.oauth_next && /^\/[A-Za-z0-9._~\-\/?#=&]*$/.test(cookies.oauth_next)
+      ? cookies.oauth_next
+      : '/'; // fallback
+    
+    const headers = new Headers();
+    headers.append('Set-Cookie',
+      `session=${sessionId}; HttpOnly; Path=/; Secure; SameSite=Lax; Max-Age=${60*60*24*30}`
+    );
+    headers.append('Set-Cookie',
+      'oauth_state=; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=0'
+    );
+    headers.append('Set-Cookie',
+      'oauth_next=; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=0'
+    );
+    
+    // Redirect back to task page
+    headers.set('Location', next);
     return new Response(null, { status: 303, headers });
   } catch (err: any) {
-    console.log('[AUTH]', 'EXCHANGE_FAIL', { message: err?.message });
-    console.error('GitHub auth failed', err);
     return new Response('Authentication failed', { status: 500 });
   }
 }
@@ -292,7 +255,6 @@ async function handleCommitFile(request: Request, env: Env): Promise<Response> {
     await commitFile(repo, path, content, message, token);
     return new Response(null, { status: 204 });
   } catch (err) {
-    console.error('commit failed', err);
     return new Response('Commit failed', { status: 500 });
   }
 }
@@ -358,7 +320,6 @@ async function handleListFiles(request: Request, env: Env, url: URL): Promise<Re
       },
     });
   } catch (err) {
-    console.error('list failed', err);
     return new Response('List failed', { status: 500 });
   }
 }
@@ -393,7 +354,7 @@ export default {
     if (pathname === '/api/health' && method === 'GET') {
       res = await handleHealth();
     } else if (pathname === '/api/auth/github' && (method === 'GET' || method === 'POST')) {
-      res = await handleAuthStart(env);
+      res = await handleAuthStart(request, env);
     } else if (pathname === '/api/auth/github/callback' && method === 'GET') {
       res = await handleAuthCallback(request, env, url);
     } else if (pathname === '/api/token' && method === 'POST') {
