@@ -26,6 +26,18 @@ export interface Env {
   SESSIONS: KVNamespace;
 }
 
+function timingSafeEqual(a: Uint8Array, b: Uint8Array): boolean {
+  // Different length ⇒ definitely not equal (length check itself leaks no
+  // useful info because both values are random, same‑size UUID strings).
+  if (a.length !== b.length) return false;
+
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) {
+    diff |= a[i] ^ b[i];           // accumulate any differing bits
+  }
+  return diff === 0;               // 0 → identical, non‑zero → mismatch
+}
+
 // ---- Cookie Utilities ------------------------------------------------------
 // Minimal parser used to read session and state cookies. It keeps
 // allocations to a minimum by splitting the header manually instead of
@@ -39,6 +51,48 @@ export function parseCookies(header: string | null): Record<string, string> {
     if (k && v) out[k] = v;
   }
   return out;
+}
+
+function withCors(request: Request, response: Response): Response {
+  const origin = request.headers.get('Origin');
+  // Only add CORS if the request came from a browser page
+  if (origin) {
+    response.headers.set('Access-Control-Allow-Origin', origin);
+    response.headers.set('Access-Control-Allow-Credentials', 'true');
+    response.headers.append('Vary', 'Origin');
+  }
+  return response;
+}
+
+/* ------------------------------------------------------------------ */
+/* Helper: resolve the session cookie → user object                   */
+/* ------------------------------------------------------------------ */
+async function getSessionUser(
+  request: Request,
+  env: Env,
+): Promise<{ id: string; login: string } | null> {
+  const cookies   = parseCookies(request.headers.get('Cookie') || '');
+  const sessionId = cookies['session'];
+  if (!sessionId) return null;
+
+  // KV lookup – returns null if the session doesn't exist / is expired.
+  return await env.SESSIONS.get(sessionId, { type: 'json' });
+}
+
+/* ────────────────────────────────────────────────────────────── *
+ * Path‑sanitisation helper                                       *
+ *  – Returns the trimmed path when valid, otherwise null.        *
+ *  – Rejects absolute paths, “..” traversal, empty strings,      *
+ *    and characters outside [A‑Za‑z0‑9._‑/].                     *
+ * ────────────────────────────────────────────────────────────── */
+function sanitizePath(raw: unknown): string | null {
+  const path = (typeof raw === 'string' ? raw : '').trim();
+  const ok =
+    path.length > 0 &&
+    !path.startsWith('/') &&
+    !path.includes('..') &&
+    /^[\w./-]+$/.test(path);
+  return ok ? path : null;
 }
 
 // ---- PAT Encryption --------------------------------------------------------
@@ -292,7 +346,6 @@ async function authenticateWithGitHub(
   return { id: String(user.id), login: user.login };
 }
 
-
 // ---- Request Router -------------------------------------------------------
 // Handles all HTTP endpoints required by the frontend. The router is kept
 // simple as the worker only exposes a handful of routes.
@@ -301,9 +354,9 @@ export default {
     const url = new URL(request.url);
 
     if (url.pathname === '/api/health') {
-      return new Response(JSON.stringify({ status: 'ok' }), {
+      return withCors(request, new Response(JSON.stringify({ status: 'ok' }), {
         headers: { 'Content-Type': 'application/json' },
-      });
+      }));
     }
 
     // Redirect the user to GitHub with a state parameter to prevent CSRF.
@@ -322,9 +375,10 @@ export default {
       const headers = new Headers({
         Location: redirect,
         'Set-Cookie': `oauth_state=${state}; HttpOnly; Path=/; Secure; SameSite=Lax`,
+        'Cache-Control': `no-store, max-age=0`,
       });
     
-      return new Response(null, { status: 302, headers });
+      return withCors(request, new Response(null, { status: 302, headers }));
     }
 
 
@@ -351,9 +405,7 @@ export default {
       // constant‑time compare
       const buf1 = new TextEncoder().encode(cookies.oauth_state);
       const buf2 = new TextEncoder().encode(state);
-      const equal =
-        buf1.length === buf2.length &&
-        crypto.subtle.timingSafeEqual(buf1, buf2);
+      const equal = timingSafeEqual(buf1, buf2);
     
       if (!equal) {
         return new Response('Invalid OAuth state', { status: 400 });
@@ -377,7 +429,7 @@ export default {
     
         // 6. Redirect to home
         headers.set('Location', '/');
-        return new Response(null, { status: 303, headers });
+        return withCors(request, new Response(null, { status: 303, headers }));
     
       } catch (err) {
         console.error('GitHub auth failed', err);
@@ -385,86 +437,163 @@ export default {
       }
     }
 
+    /* ------------------------------------------------------------------ */
+    /* /api/logout – DELETE current session                               */
+    /*  – Uses POST to avoid CSRF (same‑origin fetch with credentials).   */
+    /*  – Clears the cookie immediately and removes the KV entry.         */
+    /* ------------------------------------------------------------------ */
+    if (url.pathname === '/api/logout' && request.method === 'POST') {
+      // 1. Look up the session cookie (don’t throw if missing)
+      const cookies   = parseCookies(request.headers.get('Cookie') || '');
+      const sessionId = cookies['session'];
+    
+      if (sessionId) {
+        // 2. Best‑effort delete in KV (eventual consistency is fine)
+        await env.SESSIONS.delete(sessionId);
+      }
+    
+      // 3. Expire the cookie in the browser
+      const headers = new Headers({
+        'Set-Cookie':
+          'session=; HttpOnly; Path=/; Secure; SameSite=Lax; Max-Age=0',
+        'Cache-Control': 'no-store',
+      });
+    
+      // 4. 204 No Content (you could redirect with 303 + Location: / if preferred)
+      return withCors(request, new Response(null, { status: 204, headers }));
+    }
+
     // ---- Store PAT ---------------------------------------------------------
     // Accepts an encrypted PAT from the frontend and stores it in KV.
     if (url.pathname === '/api/token' && request.method === 'POST') {
-      const cookies = parseCookies(request.headers.get('Cookie'));
-      const userId = cookies['session'];
-      if (!userId) return new Response('Unauthorized', { status: 401 });
-      let body: any;
+      /* 1. Authenticate the caller */
+      const user = await getSessionUser(request, env);
+      if (!user) return new Response('Unauthorized', { status: 401 });
+    
+      /* 2. Parse JSON body */
+      let body: { pat?: string };
       try {
         body = await request.json();
       } catch {
         return new Response('Bad Request', { status: 400 });
       }
-      const pat = body?.pat;
-      if (typeof pat !== 'string' || pat.length === 0) {
-        return new Response('Invalid token', { status: 400 });
+    
+      const pat = (body.pat || '').trim();
+    
+      /* 3. Basic syntactic validation */
+      if (pat.length === 0 || pat.length > 256) {
+        return new Response('Invalid token length', { status: 400 });
       }
-      await storeToken(userId, pat, env);
-      return new Response(null, { status: 204 });
+      // Accept classic PATs (40‑hex) or fine‑grained prefixes
+      if (!/^((gh[pous]_|github_pat_)[A-Za-z0-9_]{20,}|[0-9a-f]{40})$/.test(pat)) {
+        return new Response('Malformed token', { status: 400 });
+      }
+    
+      /* 4. Verify the PAT with GitHub before storing */
+      const verify = await fetch('https://api.github.com/user', {
+        headers: {
+          Authorization: `Bearer ${pat}`,
+          'User-Agent': 'open-user-state',
+          Accept: 'application/vnd.github+json',
+          'X-GitHub-Api-Version': '2022-11-28',
+        },
+      });
+    
+      if (verify.status === 401) {
+        return new Response('Token not authorised', { status: 401 });
+      }
+      if (verify.status === 403) {
+        return new Response('GitHub rate limited; try later', { status: 429 });
+      }
+      if (!verify.ok) {
+        return new Response('GitHub check failed', { status: 502 });
+      }
+    
+      /* 5. Encrypt & persist */
+      await storeToken(user.id, pat, env);
+    
+      /* 6. Success – 204 No Content */
+      return withCors(request, new Response(null, {
+        status: 204,
+        headers: { 'Cache-Control': 'no-store' },
+      }));
     }
 
     // ---- Repository Selection ---------------------------------------------
     // Persists the repository where user state files will be stored.
+    
+    /* ------------------------------------------------------------------ */
+    /* /api/repository  –  POST  (save repository preference)             */
+    /* ------------------------------------------------------------------ */
     if (url.pathname === '/api/repository' && request.method === 'POST') {
-      const cookies = parseCookies(request.headers.get('Cookie'));
-      const userId = cookies['session'];
-      if (!userId) return new Response('Unauthorized', { status: 401 });
+      const user = await getSessionUser(request, env);
+      if (!user) return new Response('Unauthorized', { status: 401 });
+    
       let body: any;
       try {
         body = await request.json();
       } catch {
         return new Response('Bad Request', { status: 400 });
       }
-      const repo = body?.repo;
-      if (typeof repo !== 'string' || !repo.includes('/')) {
+    
+      const repo = (body?.repo || '').trim();
+      if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) {          // owner/repo
         return new Response('Invalid repository', { status: 400 });
       }
-      await storeRepo(userId, repo, env);
-      return new Response(null, { status: 204 });
+    
+      await storeRepo(user.id, repo, env);
+      return withCors(request, new Response(null, { status: 204 }));
     }
-
+    
+    /* ------------------------------------------------------------------ */
+    /* /api/repository  –  GET  (fetch repository preference)             */
+    /* ------------------------------------------------------------------ */
     if (url.pathname === '/api/repository' && request.method === 'GET') {
-      const cookies = parseCookies(request.headers.get('Cookie'));
-      const userId = cookies['session'];
-      if (!userId) return new Response('Unauthorized', { status: 401 });
-      const repo = await getRepo(userId, env);
-      return new Response(JSON.stringify({ repo }), {
+      const user = await getSessionUser(request, env);
+      if (!user) return new Response('Unauthorized', { status: 401 });
+    
+      const repo = await getRepo(user.id, env);
+      return withCors(request, new Response(JSON.stringify({ repo }), {
         headers: { 'Content-Type': 'application/json' },
-      });
+      }));
     }
 
     // ---- Repository File Write -------------------------------------------
     // Commits a new file with text content at the provided path.
     if (url.pathname === '/api/file' && request.method === 'POST') {
-      const cookies = parseCookies(request.headers.get('Cookie'));
-      const userId = cookies['session'];
-      if (!userId) return new Response('Unauthorized', { status: 401 });
-      let token: string | null;
-      try {
-        token = await getToken(userId, env);
-      } catch {
-        return new Response('Unauthorized', { status: 401 });
-      }
-      const repo = await getRepo(userId, env);
+      /* 1. Authenticate caller */
+      const user = await getSessionUser(request, env);
+      if (!user) return new Response('Unauthorized', { status: 401 });
+    
+      /* 2. Load token & repo */
+      const [token, repo] = await Promise.all([
+        getToken(user.id, env).catch(() => null),
+        getRepo(user.id, env),
+      ]);
       if (!token || !repo) return new Response('No repository or token', { status: 400 });
+    
+      /* 3. Parse body */
       let body: any;
       try {
         body = await request.json();
       } catch {
         return new Response('Bad Request', { status: 400 });
       }
-      const path = body?.path;
+    
+      const path    = sanitizePath(body?.path);
       const content = body?.content;
-      const message = body?.message ?? `Add ${path}`;
-      if (typeof path !== 'string' || typeof content !== 'string') {
+      const message = (body?.message || `Add ${path}`).slice(0, 200);
+    
+      if (!path || typeof content !== 'string') {
         return new Response('Invalid payload', { status: 400 });
       }
+    
+      /* 4. Commit */
       try {
         await commitFile(repo, path, content, message, token);
-        return new Response(null, { status: 204 });
-      } catch {
+        return withCors(request, new Response(null, { status: 204 }));
+      } catch (err) {
+        console.error('commit failed', err);
         return new Response('Commit failed', { status: 500 });
       }
     }
@@ -472,23 +601,31 @@ export default {
     // ---- Repository File Read --------------------------------------------
     // Returns the raw text content of a path from the configured repository.
     if (url.pathname === '/api/file' && request.method === 'GET') {
-      const cookies = parseCookies(request.headers.get('Cookie'));
-      const userId = cookies['session'];
-      if (!userId) return new Response('Unauthorized', { status: 401 });
-      let token: string | null;
-      try {
-        token = await getToken(userId, env);
-      } catch {
-        return new Response('Unauthorized', { status: 401 });
-      }
-      const repo = await getRepo(userId, env);
+      /* 1. Authenticate */
+      const user = await getSessionUser(request, env);
+      if (!user) return new Response('Unauthorized', { status: 401 });
+    
+      /* 2. Load token & repo */
+      const [token, repo] = await Promise.all([
+        getToken(user.id, env).catch(() => null),
+        getRepo(user.id, env),
+      ]);
       if (!token || !repo) return new Response('No repository or token', { status: 400 });
-      const path = url.searchParams.get('path');
-      if (!path) return new Response('Bad Request', { status: 400 });
+    
+      /* 3. Validate query param */
+      const path = sanitizePath(url.searchParams.get('path'));
+      if (!path) return new Response('Invalid path', { status: 400 });
+    
+      /* 4. Fetch from GitHub */
       try {
         const text = await readFile(repo, path, token);
+        if (text === null) return new Response('Not Found', { status: 404 });
+    
         return new Response(JSON.stringify({ content: text }), {
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            'Cache-Control': 'no-store',
+          },
         });
       } catch {
         return new Response('Read failed', { status: 500 });
@@ -498,26 +635,61 @@ export default {
     // ---- Repository File Listing ---------------------------------------
     // Returns the names of items under a directory in the configured repo.
     if (url.pathname === '/api/files' && request.method === 'GET') {
-      const cookies = parseCookies(request.headers.get('Cookie'));
-      const userId = cookies['session'];
-      if (!userId) return new Response('Unauthorized', { status: 401 });
-      let token: string | null;
-      try {
-        token = await getToken(userId, env);
-      } catch {
-        return new Response('Unauthorized', { status: 401 });
+      /* 1. Authenticate via the session cookie */
+      const user = await getSessionUser(request, env);
+      if (!user) return new Response('Unauthorized', { status: 401 });
+    
+      /* 2. Grab the PAT and preferred repo in parallel */
+      const [token, repo] = await Promise.all([
+        getToken(user.id, env).catch(() => null),
+        getRepo(user.id, env),
+      ]);
+      if (!token || !repo) {
+        return new Response('No repository or token', { status: 400 });
       }
-      const repo = await getRepo(userId, env);
-      if (!token || !repo) return new Response('No repository or token', { status: 400 });
-      const path = url.searchParams.get('path') || '';
+    
+      /* 3. Validate the “path” query param (empty string = repo root) */
+      const rawDir = (url.searchParams.get('path') || '').trim();
+      const dir    = rawDir === '' ? '' : sanitizePath(rawDir);
+      if (dir === null) return new Response('Invalid path', { status: 400 });
+    
+      /* 4. List files from GitHub */
       try {
-        const entries = await listFiles(repo, path, token);
-        return new Response(JSON.stringify({ files: entries }), {
-          headers: { 'Content-Type': 'application/json' },
-        });
-      } catch {
+        const entries = await listFiles(repo, dir, token);
+        return withCors(request, new Response(JSON.stringify({ files: entries }), {
+          headers: {
+            'Content-Type': 'application/json',
+            'Cache-Control': 'no-store', // avoid intermediary caching
+          },
+        }));
+      } catch (err) {
+        console.error('list failed', err);
         return new Response('List failed', { status: 500 });
       }
+    }
+
+    /* ------------------------------------------------------------------ */
+    /* Universal CORS pre‑flight handler                                  */
+    /* ------------------------------------------------------------------ */
+    if (request.method === 'OPTIONS' && url.pathname.startsWith('/api/')) {
+      const origin = request.headers.get('Origin') || '*';
+      const reqHdr = request.headers.get('Access-Control-Request-Headers') || '';
+    
+      return new Response(null, {
+        status: 204,
+        headers: {
+          // Allow the requesting origin (required when you send cookies)
+          'Access-Control-Allow-Origin': origin,
+          // Allowed verbs for the API
+          'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+          // Echo requested headers so the browser can send them
+          'Access-Control-Allow-Headers': reqHdr,
+          // Needed for credentials: "include"
+          'Access-Control-Allow-Credentials': 'true',
+          // Cache this pre‑flight for 1 day
+          'Access-Control-Max-Age': '86400',
+        },
+      });
     }
 
     return new Response('Not Found', { status: 404 });
