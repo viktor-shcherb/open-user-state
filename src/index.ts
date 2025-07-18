@@ -190,10 +190,15 @@ async function handleCommitFile(request: Request, env: Env): Promise<Response> {
   const user = await getSessionUser(request, env);
   if (!user) return new Response('Unauthorized', { status: 401 });
 
-  const [token, repo] = await Promise.all([
-    getToken(user.id, env).catch(() => null),
-    getRepo(user.id, env),
-  ]);
+  let token: string | null;
+  try {
+    token = await getToken(user.id, env);
+  } catch {
+    // Decryption failed – likely corrupted ciphertext or wrong secret.
+    // Treat as an authentication failure so the frontend can re-login.
+    return new Response('Unauthorized', { status: 401 });
+  }
+  const repo = await getRepo(user.id, env);
   if (!token || !repo) return new Response('No repository or token', { status: 400 });
 
   let body: any;
@@ -223,10 +228,15 @@ async function handleReadFile(request: Request, env: Env, url: URL): Promise<Res
   const user = await getSessionUser(request, env);
   if (!user) return new Response('Unauthorized', { status: 401 });
 
-  const [token, repo] = await Promise.all([
-    getToken(user.id, env).catch(() => null),
-    getRepo(user.id, env),
-  ]);
+  let token: string | null;
+  try {
+    token = await getToken(user.id, env);
+  } catch {
+    // User session is valid but the PAT failed to decrypt. Return 401
+    // so the client can prompt for a new token instead of showing 400.
+    return new Response('Unauthorized', { status: 401 });
+  }
+  const repo = await getRepo(user.id, env);
   if (!token || !repo) return new Response('No repository or token', { status: 400 });
 
   const path = sanitizePath(url.searchParams.get('path'));
@@ -250,10 +260,14 @@ async function handleListFiles(request: Request, env: Env, url: URL): Promise<Re
   const user = await getSessionUser(request, env);
   if (!user) return new Response('Unauthorized', { status: 401 });
 
-  const [token, repo] = await Promise.all([
-    getToken(user.id, env).catch(() => null),
-    getRepo(user.id, env),
-  ]);
+  let token: string | null;
+  try {
+    token = await getToken(user.id, env);
+  } catch {
+    // The encrypted PAT could not be decrypted, likely due to tampering.
+    return new Response('Unauthorized', { status: 401 });
+  }
+  const repo = await getRepo(user.id, env);
   if (!token || !repo) return new Response('No repository or token', { status: 400 });
 
   const rawDir = (url.searchParams.get('path') || '').trim();
