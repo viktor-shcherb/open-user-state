@@ -1,7 +1,7 @@
 name = "open-user-state-personal-website"   # production script
 main = "src/index.ts"
 compatibility_date = "2024-05-25"
-node_compat = true
+nodejs_compat = true
 workers_dev = true        # prod will have workers.dev URL
 
 [observability.logs]
