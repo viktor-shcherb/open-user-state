@@ -3,7 +3,12 @@
  * correctly and that decryption fails when using the wrong secret.
  */
 import { describe, it, expect } from 'vitest';
-import { encryptPAT, decryptPAT } from '../src/index';
+import { webcrypto } from 'node:crypto';
+
+// Vitest runs in a Node environment where `crypto` is not globally available
+// like it is in Cloudflare Workers. Expose it here for the helpers under test.
+globalThis.crypto = webcrypto as unknown as Crypto;
+import { encryptPAT, decryptPAT } from '../src/auth';
 
 const secret = 's3cret';
 

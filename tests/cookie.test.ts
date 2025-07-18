@@ -4,7 +4,7 @@
  * edge cases like a null header.
  */
 import { describe, it, expect } from 'vitest';
-import { parseCookies } from '../src/index';
+import { parseCookies } from '../src/auth';
 
 describe('parseCookies', () => {
   it('parses key=value pairs', () => {
