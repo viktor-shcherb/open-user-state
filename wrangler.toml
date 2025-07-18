@@ -1,16 +1,42 @@
-name = "open-user-state-personal-website"
+name = "open-user-state-personal-website-dev"
 main = "src/index.ts"
 compatibility_date = "2024-05-25"
 node_compat = true
-kv_namespaces = [
-  { binding = "USER_PAT_STORE", id = "8b99c8c064fc4eadb803d6018f4516b9", preview_id = "8b99c8c064fc4eadb803d6018f4516b9" },
-  { binding = "USER_REPO_STORE", id = "3ba5ec05252d481388ab12ef71d28f56", preview_id = "3ba5ec05252d481388ab12ef71d28f56" },
-  { binding = "SESSIONS", id = "bb9d2ee7778841588128d1b9367def84", preview_id = "bb9d2ee7778841588128d1b9367def84" }
-]
+workers_dev = true 
+
+# Dev (shared) KV namespaces (IDs are your existing ones)
+[[kv_namespaces]]
+binding    = "USER_PAT_STORE"
+id         = "8b99c8c064fc4eadb803d6018f4516b9"
+preview_id = "8b99c8c064fc4eadb803d6018f4516b9"
+
+[[kv_namespaces]]
+binding    = "USER_REPO_STORE"
+id         = "3ba5ec05252d481388ab12ef71d28f56"
+preview_id = "3ba5ec05252d481388ab12ef71d28f56"
+
+[[kv_namespaces]]
+binding    = "SESSIONS"
+id         = "bb9d2ee7778841588128d1b9367def84"
+preview_id = "bb9d2ee7778841588128d1b9367def84"
 
 [observability.logs]
 enabled = true
 
-[vars]  # default (a.k.a. “dev”)
-GITHUB_CLIENT_ID = "Ov23liFRU2GYxAyhNmTb"
-GITHUB_REDIRECT_URI = "https://open-user-state-personal-website.viktoroo-sch.workers.dev/api/auth/github/callback"
+# ---------- Dev Vars ----------
+[vars]
+RUNTIME_ENV          = "dev"
+GITHUB_CLIENT_ID     = "Ov23liFRU2GYxAyhNmTb"
+GITHUB_REDIRECT_URI  = "https://open-user-state-personal-website-dev.<your-account>.workers.dev/api/auth/github/callback"
+FRONTEND_ORIGIN      = "http://localhost:4000"
+
+##################################
+# Production Environment Override
+##################################
+[env.production]
+name        = "open-user-state-personal-website"   # original name reserved for prod
+workers_dev = false                                # optionally disable workers.dev for prod
+
+[env.production.vars]
+RUNTIME_ENV         = "production"
+FRONTEND_ORIGIN     = "https://viktor-shcherb.github.io"
