@@ -59,45 +59,112 @@ async function handleHealth(): Promise<Response> {
   });
 }
 
-async function handleAuthStart(env: Env): Promise<Response> {
+function short(v: string | null | undefined, n = 6) {
+  if (!v) return v;
+  return v.length <= n ? v : v.slice(0, n) + '…';
+}
+
+function hash(value: string | null | undefined) {
+  if (!value) return value;
+  // Non-cryptographic short fingerprint just for correlation (DON'T use for security)
+  let h = 0;
+  for (let i = 0; i < value.length; i++) {
+    h = (h * 31 + value.charCodeAt(i)) | 0;
+  }
+  return (h >>> 0).toString(16);
+}
+
+async function handleAuthStart(env: Env, request?: Request): Promise<Response> {
   const state = crypto.randomUUID();
+
+  // Derive/validate redirect URI (optional improvement)
+  const configuredRedirect = env.GITHUB_REDIRECT_URI;
+  // You could normalize or derive from request if desired:
+  // const derivedRedirect = new URL('/api/auth/github/callback', request?.url || configuredRedirect).toString();
+
+  console.log('[AUTH]', 'START', {
+    state,
+    client: short(env.GITHUB_CLIENT_ID, 8),
+    redirectUri: configuredRedirect,
+  });
+
   const redirect =
     `https://github.com/login/oauth/authorize` +
-    `?client_id=${env.GITHUB_CLIENT_ID}` +
-    `&redirect_uri=${env.GITHUB_REDIRECT_URI}` +
-    `&scope=user:email&state=${state}`;
+    `?client_id=${encodeURIComponent(env.GITHUB_CLIENT_ID)}` +
+    `&redirect_uri=${encodeURIComponent(configuredRedirect)}` +
+    `&scope=` + encodeURIComponent('user:email') +
+    `&state=${encodeURIComponent(state)}`;
+
   const headers = new Headers({
     Location: redirect,
     'Set-Cookie': `oauth_state=${state}; HttpOnly; Path=/; Secure; SameSite=Lax`,
     'Cache-Control': 'no-store, max-age=0',
   });
+
+  console.log('[AUTH]', 'REDIRECT', { to: redirect });
   return new Response(null, { status: 302, headers });
 }
 
 async function handleAuthCallback(request: Request, env: Env, url: URL): Promise<Response> {
-  const params = url.searchParams;
-  const code = params.get('code');
-  const state = params.get('state');
-  const error = params.get('error');
+  const params  = url.searchParams;
+  const code    = params.get('code');
+  const state   = params.get('state');
+  const error   = params.get('error');
   const cookies = parseCookies(request.headers.get('Cookie') || '');
 
-  if (error) return jsonError(400, 'GITHUB_ERROR');
+  console.log('[AUTH]', 'CALLBACK_HIT', {
+    path: url.pathname,
+    hasCode: !!code,
+    statePrefix: short(state),
+    stateHash: hash(state),
+    cookieStatePrefix: short(cookies.oauth_state),
+    cookieStateHash: hash(cookies.oauth_state),
+    error,
+    search: url.search.slice(0, 120) + (url.search.length > 120 ? '…' : ''),
+  });
+
+  if (error) {
+    console.log('[AUTH]', 'ERROR_PARAM', { error });
+    return jsonError(400, 'GITHUB_ERROR');
+  }
+
   if (!code || !state || !cookies.oauth_state) {
+    console.log('[AUTH]', 'MISSING_OAUTH_PARTS', {
+      hasCode: !!code,
+      hasState: !!state,
+      hasCookieState: !!cookies.oauth_state,
+    });
     return jsonError(400, 'MISSING_OAUTH');
   }
 
+  // Timing-safe compare
   const buf1 = new TextEncoder().encode(cookies.oauth_state);
   const buf2 = new TextEncoder().encode(state);
   if (!timingSafeEqual(buf1, buf2)) {
+    console.log('[AUTH]', 'STATE_MISMATCH', {
+      stateHash: hash(state),
+      cookieStateHash: hash(cookies.oauth_state),
+    });
     return jsonError(400, 'INVALID_OAUTH_STATE');
   }
 
+  console.log('[AUTH]', 'STATE_OK', {
+    stateHash: hash(state),
+  });
+
   try {
     const user = await authenticateWithGitHub(code, env);
+    console.log('[AUTH]', 'EXCHANGE_OK', {
+      userId: user.id,
+      login: user.login,
+      // No tokens logged.
+    });
+
     const sessionId = crypto.randomUUID();
     await env.SESSIONS.put(sessionId, JSON.stringify(user), {
       expirationTtl: 60 * 60 * 24 * 30,
     });
+
     const headers = new Headers({
       'Set-Cookie': [
         `session=${sessionId}; HttpOnly; Path=/; Secure; SameSite=Lax`,
@@ -105,12 +172,16 @@ async function handleAuthCallback(request: Request, env: Env, url: URL): Promise
       ].join(', '),
     });
     headers.set('Location', '/');
+
+    console.log('[AUTH]', 'SESSION_SET', { sessionId: short(sessionId, 12), userId: user.id });
     return new Response(null, { status: 303, headers });
-  } catch (err) {
+  } catch (err: any) {
+    console.log('[AUTH]', 'EXCHANGE_FAIL', { message: err?.message });
     console.error('GitHub auth failed', err);
     return new Response('Authentication failed', { status: 500 });
   }
 }
+
 
 async function handleStoreToken(request: Request, env: Env): Promise<Response> {
   const user = await getSessionUser(request, env);
