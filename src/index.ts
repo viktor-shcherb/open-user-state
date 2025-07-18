@@ -17,6 +17,8 @@ export interface Env {
   GITHUB_REDIRECT_URI: string;
   /** Secret used to derive per-token encryption keys */
   ENCRYPTION_SECRET: string;
+  /** Allowed origin for all requests */
+  FRONTEND_ORIGIN: string;
   /** KV namespace for storing encrypted PATs */
   USER_PAT_STORE: KVNamespace;
   /** KV namespace for persisting user repository preferences */
@@ -37,17 +39,48 @@ import { storeRepo, getRepo } from './repo';
 import { sanitizePath, commitFile, readFile, listFiles } from './files';
 import { jsonError } from './errors';
 
+
+function getFrontendOrigin(env: Env): string {
+  // Trim & normalize (no trailing slash).
+  return (env.FRONTEND_ORIGIN || '').replace(/\/+$/, '');
+}
+
+function isAllowedOrigin(origin: string | null, env: Env): boolean {
+  if (!origin) return false;
+  return origin === getFrontendOrigin(env);
+}
+
+// Validate a *relative* `next` path (no host) to prevent open redirects.
+function normalizeNext(rel: string | null | undefined): string {
+  if (!rel) return '/';
+  // Allow path + query + hash; reject anything with protocol or //.
+  if (!/^\/[A-Za-z0-9._~\-\/?#[\]=&:%+]*$/.test(rel)) return '/';
+  return rel;
+}
+
 /* -------------------------------------------------------------------------- */
 /* Utility to attach CORS headers to every response                           */
 /* -------------------------------------------------------------------------- */
-function withCors(request: Request, response: Response): Response {
+function withCors(request: Request, response: Response, env: Env): Response {
   const origin = request.headers.get('Origin');
-  if (origin) {
+  const allowedOrigin = getFrontendOrigin(env);
+
+  if (origin && origin === allowedOrigin) {
     response.headers.set('Access-Control-Allow-Origin', origin);
     response.headers.set('Access-Control-Allow-Credentials', 'true');
     response.headers.append('Vary', 'Origin');
   }
   return response;
+}
+
+function enforceOrigin(request: Request, env: Env): Response | null {
+  const method = request.method;
+  if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') return null;
+  const origin = request.headers.get('Origin');
+  if (!isAllowedOrigin(origin, env)) {
+    return jsonError(403, 'BAD_ORIGIN');
+  }
+  return null;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -61,9 +94,7 @@ async function handleHealth(): Promise<Response> {
 
 async function handleAuthStart(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
-  const nextRaw = url.searchParams.get('next') || '/'; // default to root or a dashboard
-  // Security: allow only same-site relative paths (no scheme / host)
-  const next = /^\/[A-Za-z0-9._~\-\/?#=&]*$/.test(nextRaw) ? nextRaw : '/';
+  const next = normalizeNext(url.searchParams.get('next'));
 
   const state = crypto.randomUUID();
 
@@ -122,26 +153,23 @@ async function handleAuthCallback(request: Request, env: Env, url: URL): Promise
       expirationTtl: 60 * 60 * 24 * 30,
     });
 
-    const next = cookies.oauth_next && /^\/[A-Za-z0-9._~\-\/?#=&]*$/.test(cookies.oauth_next)
-      ? cookies.oauth_next
-      : '/'; // fallback
+    const nextRel = cookies.oauth_next ? decodeURIComponent(cookies.oauth_next) : '/';
+    const safeRel = normalizeNext(nextRel);
+    const frontend = getFrontendOrigin(env);
+    const redirectTarget = frontend + safeRel;
     
     const headers = new Headers();
     headers.append('Set-Cookie',
-      `session=${sessionId}; HttpOnly; Path=/; Secure; SameSite=None; Max-Age=${60*60*24*30}`
-    );
+      `session=${sessionId}; HttpOnly; Path=/; Secure; SameSite=None; Max-Age=${60*60*24*30}`);
     headers.append('Set-Cookie',
-      'oauth_state=; Path=/; Secure; HttpOnly; SameSite=None; Max-Age=0'
-    );
+      'oauth_state=; Path=/; Secure; HttpOnly; SameSite=None; Max-Age=0');
     headers.append('Set-Cookie',
-      'oauth_next=; Path=/; Secure; HttpOnly; SameSite=None; Max-Age=0'
-    );
+      'oauth_next=; Path=/; Secure; HttpOnly; SameSite=None; Max-Age=0');
+    headers.set('Location', redirectTarget);
     
-    // Redirect back to task page
-    headers.set('Location', next);
     return new Response(null, { status: 303, headers });
   } catch (err: any) {
-    return new Response('Authentication failed', { status: 500 });
+    return jsonError(500, 'AUTH_FAILED');
   }
 }
 
@@ -225,15 +253,15 @@ async function handleCommitFile(request: Request, env: Env): Promise<Response> {
   const user = await getSessionUser(request, env);
   if (!user) return jsonError(401, 'UNAUTHORIZED');
 
-   try {
-    const [token, repo] = await Promise.all([
+  let token: string | null = null;
+  let repo: string | null = null;
+  try {
+    [token, repo] = await Promise.all([
       getToken(user.id, env),
       getRepo(user.id, env),
     ]);
     if (!token || !repo) return jsonError(400, 'MISSING_REPO_OR_TOKEN');
   } catch {
-    // User session is valid but the PAT failed to decrypt. Return 401
-    // so the client can prompt for a new token instead of showing 400.
     return jsonError(401, 'UNAUTHORIZED');
   }
 
@@ -255,7 +283,7 @@ async function handleCommitFile(request: Request, env: Env): Promise<Response> {
     await commitFile(repo, path, content, message, token);
     return new Response(null, { status: 204 });
   } catch (err) {
-    return new Response('Commit failed', { status: 500 });
+    return jsonError(500, 'COMMIT_FAILED');
   }
 }
 
@@ -263,15 +291,15 @@ async function handleReadFile(request: Request, env: Env, url: URL): Promise<Res
   const user = await getSessionUser(request, env);
   if (!user) return jsonError(401, 'UNAUTHORIZED');
 
+  let token: string | null = null;
+  let repo: string | null = null;
   try {
-    const [token, repo] = await Promise.all([
+    [token, repo] = await Promise.all([
       getToken(user.id, env),
       getRepo(user.id, env),
     ]);
     if (!token || !repo) return jsonError(400, 'MISSING_REPO_OR_TOKEN');
   } catch {
-    // User session is valid but the PAT failed to decrypt. Return 401
-    // so the client can prompt for a new token instead of showing 400.
     return jsonError(401, 'UNAUTHORIZED');
   }
 
@@ -282,28 +310,26 @@ async function handleReadFile(request: Request, env: Env, url: URL): Promise<Res
     const text = await readFile(repo, path, token);
     if (text === null) return jsonError(404, 'NOT_FOUND');
     return new Response(JSON.stringify({ content: text }), {
-      headers: {
-        'Content-Type': 'application/json',
-        'Cache-Control': 'no-store',
-      },
+      headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
     });
-  } catch {
-    return new Response('Read failed', { status: 500 });
+  } catch (err) {
+    return jsonError(500, 'READ_FAILED'); 
   }
 }
 
 async function handleListFiles(request: Request, env: Env, url: URL): Promise<Response> {
   const user = await getSessionUser(request, env);
   if (!user) return jsonError(401, 'UNAUTHORIZED');
-  
+
+  let token: string | null = null;
+  let repo: string | null = null;
   try {
-    const [token, repo] = await Promise.all([
+    [token, repo] = await Promise.all([
       getToken(user.id, env),
       getRepo(user.id, env),
     ]);
-    if (!token || !repo) return new Response('No repository or token', { status: 400 });
+    if (!token || !repo) return jsonError(400, 'MISSING_REPO_OR_TOKEN');
   } catch {
-    // The encrypted PAT could not be decrypted, likely due to tampering.
     return jsonError(401, 'UNAUTHORIZED');
   }
 
@@ -314,27 +340,30 @@ async function handleListFiles(request: Request, env: Env, url: URL): Promise<Re
   try {
     const entries = await listFiles(repo, dir, token);
     return new Response(JSON.stringify({ files: entries }), {
-      headers: {
-        'Content-Type': 'application/json',
-        'Cache-Control': 'no-store',
-      },
+      headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
     });
-  } catch (err) {
-    return new Response('List failed', { status: 500 });
+  } catch {
+    return jsonError(500, 'LIST_FAILED');
   }
 }
 
-function handlePreflight(request: Request): Response {
-  const origin = request.headers.get('Origin') || '*';
+function handlePreflight(request: Request, env: Env): Response {
+  const origin = request.headers.get('Origin');
+  const allowed = isAllowedOrigin(origin, env) ? origin : '';
+  if (!allowed) {
+    return new Response(null, { status: 403 });
+  }
   const reqHdr = request.headers.get('Access-Control-Request-Headers') || '';
+  const allowHeaders = reqHdr ? reqHdr : 'Content-Type';
   return new Response(null, {
     status: 204,
     headers: {
-      'Access-Control-Allow-Origin': origin,
-      'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-      'Access-Control-Allow-Headers': reqHdr,
+      'Access-Control-Allow-Origin': allowed,
+      'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
+      'Access-Control-Allow-Headers': allowHeaders,
       'Access-Control-Allow-Credentials': 'true',
-      'Access-Control-Max-Age': '86400',
+      'Access-Control-Max-Age': '600',
+      'Vary': 'Origin',
     },
   });
 }
@@ -345,14 +374,31 @@ function handlePreflight(request: Request): Response {
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
-    const hdrTag = 'X-Worker-Build';
-    const buildStamp = 'build-2025-07-18a'; // change each deploy for certainty
+    let pathname = url.pathname;
+    if (pathname !== '/' && pathname.endsWith('/')) {
+      pathname = pathname.replace(/\/+$/, '');
+    }
     
-    const { method, pathname } = { method: request.method, pathname: url.pathname };
+    const method = request.method;
+    const hdrTag = 'X-Worker-Build';
+    const buildStamp = 'build-2025-07-18a';
+
     let res: Response | null = null;
 
-    if (pathname === '/api/health' && method === 'GET') {
+    // do not enforce origin for auth
+    if (
+      ['POST','PUT','PATCH','DELETE'].includes(method) &&
+      !pathname.startsWith('/api/auth/')
+    ) {
+      const originErr = enforceOrigin(request, env);
+      if (originErr) return withCors(request, originErr, env);
+    }
+
+    if (pathname === '/api/health' && (method === 'GET' || method === 'HEAD')) {
       res = await handleHealth();
+      if (method === 'HEAD') {
+        res = new Response(null, res); // strip body
+      }
     } else if (pathname === '/api/auth/github' && (method === 'GET' || method === 'POST')) {
       res = await handleAuthStart(request, env);
     } else if (pathname === '/api/auth/github/callback' && method === 'GET') {
@@ -372,13 +418,13 @@ export default {
     } else if (pathname === '/api/files' && method === 'GET') {
       res = await handleListFiles(request, env, url);
     } else if (method === 'OPTIONS' && pathname.startsWith('/api/')) {
-      res = handlePreflight(request);
+      res = handlePreflight(request, env);
     }
 
     if (!res) {
       res = jsonError(404, 'NOT_FOUND');
     }
     res.headers.set(hdrTag, buildStamp);
-    return withCors(request, res);
+    return withCors(request, res, env);
   },
 };
