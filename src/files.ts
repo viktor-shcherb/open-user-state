@@ -3,11 +3,30 @@
  *
  * Functions here wrap the GitHub contents API and perform path validation so
  * the rest of the worker can simply pass user input. Each operation requires a
- * PAT with repository permissions and assumes the repo exists.
+ * Personal Access Token with repository permissions and assumes the repo exists.
+ *
+ * The write helpers fetch existing file metadata when necessary. This allows
+ * callers to update files deterministically by including the current `sha` in
+ * the PUT request, avoiding a 409 Conflict response from GitHub.
  */
 
 import type { Env } from './index';
 import { ensureRepoExists } from './repo';
+
+// Compute the git blob sha1 of the given content. GitHub's contents API
+// returns this hash for existing files, so we replicate the algorithm to
+// determine if a commit would introduce any changes.
+async function blobSha(content: string): Promise<string> {
+  const bytes = new TextEncoder().encode(content);
+  const header = new TextEncoder().encode(`blob ${bytes.length}\0`);
+  const data = new Uint8Array(header.length + bytes.length);
+  data.set(header);
+  data.set(bytes, header.length);
+  const digest = await crypto.subtle.digest('SHA-1', data);
+  return Array.from(new Uint8Array(digest))
+    .map(b => b.toString(16).padStart(2, '0'))
+    .join('');
+}
 
 // ---- Path sanitisation -----------------------------------------------------
 export function sanitizePath(raw: unknown): string | null {
@@ -31,6 +50,27 @@ export async function commitFile(
   await ensureRepoExists(repo, token);
   const [owner, name] = repo.split('/');
   const url = `https://api.github.com/repos/${owner}/${name}/contents/${encodeURIComponent(path)}`;
+
+  // Check if the target file already exists so we can include its `sha` when
+  // updating. GitHub requires the sha to avoid a 409 Conflict and lets us skip
+  // the write entirely when the content hasn't changed.
+  let sha: string | null = null;
+  const lookup = await fetch(url, {
+    headers: { Authorization: `Bearer ${token}`, 'User-Agent': 'open-user-state' },
+  });
+  if (lookup.ok) {
+    const data = await lookup.json<any>();
+    sha = data.sha as string;
+    const newSha = await blobSha(content);
+    // Nothing to commit if the content matches the existing blob
+    if (newSha === sha) return;
+  } else if (lookup.status !== 404) {
+    throw new Error('commit lookup failed');
+  }
+
+  const body: any = { message, content: btoa(content) };
+  if (sha) body.sha = sha;
+
   const res = await fetch(url, {
     method: 'PUT',
     headers: {
@@ -38,7 +78,7 @@ export async function commitFile(
       'User-Agent': 'open-user-state',
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ message, content: btoa(content) }),
+    body: JSON.stringify(body),
   });
   if (!res.ok) throw new Error('commit failed');
 }

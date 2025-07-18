@@ -39,6 +39,7 @@ High‑level overview of notable files. **Update this list whenever files are ad
 - `tests/cookie.test.ts` – unit tests for `parseCookies` from `src/auth.ts`.
 - `tests/encryption.test.ts` – tests `encryptPAT` and `decryptPAT` helpers from `src/auth.ts`.
 - `tests/router.test.ts` – integration tests for the worker routes defined in `src/index.ts`.
+- `tests/files.test.ts` – tests `commitFile` overwrite logic from `src/files.ts`.
 - `package.json` / `package-lock.json` – Node.js dependencies and npm scripts.
 - `tsconfig.json` – TypeScript compiler settings shared across source and tests.
 - `wrangler.toml` – Cloudflare Worker deployment configuration.
