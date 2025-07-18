@@ -301,20 +301,55 @@ export default {
     // GitHub redirects back here with the "code" which we exchange for
     // an access token and create a session cookie.
     if (url.pathname === '/api/auth/github/callback' && request.method === 'GET') {
-      const params = url.searchParams;
-      const code = params.get('code');
-      const state = params.get('state');
-      const cookies = parseCookies(request.headers.get('Cookie'));
-      if (!code || !state || cookies['oauth_state'] !== state) {
+      const params  = url.searchParams;
+      const code    = params.get('code');
+      const state   = params.get('state');
+      const error   = params.get('error');           // <— new
+      const cookies = parseCookies(request.headers.get('Cookie') || '');
+    
+      // 1. Handle explicit GitHub denial
+      if (error) {
+        return new Response(`GitHub error: ${error}`, { status: 400 });
+      }
+    
+      // 2. Validate code & state
+      if (!code || !state || !cookies.oauth_state) {
+        return new Response('Missing OAuth values', { status: 400 });
+      }
+    
+      // constant‑time compare
+      const buf1 = new TextEncoder().encode(cookies.oauth_state);
+      const buf2 = new TextEncoder().encode(state);
+      const equal =
+        buf1.length === buf2.length &&
+        crypto.subtle.timingSafeEqual(buf1, buf2);
+    
+      if (!equal) {
         return new Response('Invalid OAuth state', { status: 400 });
       }
+    
       try {
+        // 3. Exchange code → token → user
         const user = await authenticateWithGitHub(code, env);
-        const headers = new Headers({ Location: '/' });
-        headers.append('Set-Cookie', `session=${user.id}; HttpOnly; Path=/; Secure; SameSite=Lax`);
-        headers.append('Set-Cookie', 'oauth_state=; Max-Age=0; Path=/; Secure; HttpOnly');
-        return new Response(null, { status: 302, headers });
+    
+        // 4. Create a random session ID -> store in KV/DB
+        const sessionId = crypto.randomUUID();
+        await env.SESSIONS.put(sessionId, JSON.stringify(user), { expirationTtl: 60 * 60 * 24 * 30 }); // 30 days
+    
+        // 5. Set cookies
+        const headers = new Headers({
+          'Set-Cookie': [
+            `session=${sessionId}; HttpOnly; Path=/; Secure; SameSite=Lax`,
+            `oauth_state=; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=0`,
+          ].join(', '),
+        });
+    
+        // 6. Redirect to home
+        headers.set('Location', '/');
+        return new Response(null, { status: 303, headers });
+    
       } catch (err) {
+        console.error('GitHub auth failed', err);
         return new Response('Authentication failed', { status: 500 });
       }
     }
