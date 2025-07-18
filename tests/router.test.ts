@@ -3,7 +3,16 @@
  * respond as expected without hitting external services.
  */
 import { describe, it, expect } from 'vitest';
+import { webcrypto } from 'node:crypto';
 import worker from '../src/index';
+
+// Provide a global `crypto` shim only when Node doesn't supply one. This avoids
+// TypeErrors on recent Node versions where the property is read-only.
+if (!globalThis.crypto) {
+  Object.defineProperty(globalThis, 'crypto', {
+    value: webcrypto,
+  });
+}
 
 const baseEnv = {
   GITHUB_CLIENT_ID: 'id',

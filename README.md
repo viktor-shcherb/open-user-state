@@ -11,6 +11,11 @@ This project hosts a Cloudflare Worker that serves as a backend for
 [frontend](https://github.com/viktor-shcherb/viktor-shcherb.github.io). The aim
 is to authenticate users via GitHub and sync editor state to a repository using
 a Personal Access Token (PAT).
+
+The code is split into small modules under `src/`:
+`auth.ts` handles OAuth and token encryption, `repo.ts` manages repository
+preferences and `files.ts` wraps the GitHub file APIs. `index.ts` wires these
+together and exposes the HTTP routes.
 <!--
   Development instructions demonstrate how to run the worker locally
   and execute tests so contributors can verify changes quickly.
@@ -30,6 +35,10 @@ Run the test suite with coverage:
 ```bash
 npm run coverage
 ```
+
+Vitest expects a Node runtime that exposes the standard `webcrypto` API on
+`globalThis.crypto` (Node 18+). When running on older versions the tests will
+shim the API automatically.
 
 <!--
   The API Endpoints section catalogs each HTTP route exposed by the worker

@@ -32,11 +32,18 @@ High‑level overview of notable files. **Update this list whenever files are ad
 - `README.md` – project overview, development instructions and API description.
 - `LICENSE` – license terms.
 - `docs/security.md` – security considerations for handling Personal Access Tokens.
-- `src/index.ts` – Cloudflare Worker entry point; orchestrates routes and uses helpers from `src/github.ts`.
-- `src/github.ts` – GitHub API stubs invoked by `src/index.ts` for authentication and repository operations.
-- `tests/cookie.test.ts` – unit tests for `parseCookies` from `src/index.ts`.
-- `tests/encryption.test.ts` – tests `encryptPAT` and `decryptPAT` helpers from `src/index.ts`.
+- `src/index.ts` – Cloudflare Worker entry point that wires together the helper modules.
+- `src/auth.ts` – OAuth flow, session lookup and PAT encryption helpers.
+- `src/repo.ts` – persistence of user repository preferences and repo creation.
+- `src/files.ts` – wrappers around the GitHub contents API.
+- `tests/cookie.test.ts` – unit tests for `parseCookies` from `src/auth.ts`.
+- `tests/encryption.test.ts` – tests `encryptPAT` and `decryptPAT` helpers from `src/auth.ts`.
 - `tests/router.test.ts` – integration tests for the worker routes defined in `src/index.ts`.
 - `package.json` / `package-lock.json` – Node.js dependencies and npm scripts.
 - `tsconfig.json` – TypeScript compiler settings shared across source and tests.
 - `wrangler.toml` – Cloudflare Worker deployment configuration.
+
+## Development Notes
+
+Testing relies on Node's built-in `webcrypto` implementation. Use Node 18 or
+newer so `globalThis.crypto` is available without additional shims.

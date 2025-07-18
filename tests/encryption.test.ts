@@ -3,7 +3,17 @@
  * correctly and that decryption fails when using the wrong secret.
  */
 import { describe, it, expect } from 'vitest';
-import { encryptPAT, decryptPAT } from '../src/index';
+import { webcrypto } from 'node:crypto';
+
+// Vitest runs under Node which already exposes `globalThis.crypto` in modern
+// versions. Only install a shim when it's missing so the tests work on older
+// Node releases without triggering a TypeError.
+if (!globalThis.crypto) {
+  Object.defineProperty(globalThis, 'crypto', {
+    value: webcrypto,
+  });
+}
+import { encryptPAT, decryptPAT } from '../src/auth';
 
 const secret = 's3cret';
 
