@@ -42,3 +42,8 @@ High‑level overview of notable files. **Update this list whenever files are ad
 - `package.json` / `package-lock.json` – Node.js dependencies and npm scripts.
 - `tsconfig.json` – TypeScript compiler settings shared across source and tests.
 - `wrangler.toml` – Cloudflare Worker deployment configuration.
+
+## Development Notes
+
+Testing relies on Node's built-in `webcrypto` implementation. Use Node 18 or
+newer so `globalThis.crypto` is available without additional shims.

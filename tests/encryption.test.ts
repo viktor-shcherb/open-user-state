@@ -5,9 +5,14 @@
 import { describe, it, expect } from 'vitest';
 import { webcrypto } from 'node:crypto';
 
-// Vitest runs in a Node environment where `crypto` is not globally available
-// like it is in Cloudflare Workers. Expose it here for the helpers under test.
-globalThis.crypto = webcrypto as unknown as Crypto;
+// Vitest runs under Node which already exposes `globalThis.crypto` in modern
+// versions. Only install a shim when it's missing so the tests work on older
+// Node releases without triggering a TypeError.
+if (!globalThis.crypto) {
+  Object.defineProperty(globalThis, 'crypto', {
+    value: webcrypto,
+  });
+}
 import { encryptPAT, decryptPAT } from '../src/auth';
 
 const secret = 's3cret';

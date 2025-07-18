@@ -36,6 +36,10 @@ Run the test suite with coverage:
 npm run coverage
 ```
 
+Vitest expects a Node runtime that exposes the standard `webcrypto` API on
+`globalThis.crypto` (Node 18+). When running on older versions the tests will
+shim the API automatically.
+
 <!--
   The API Endpoints section catalogs each HTTP route exposed by the worker
   so the frontend knows how to authenticate and store user state.
