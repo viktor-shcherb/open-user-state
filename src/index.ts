@@ -275,15 +275,27 @@ export default {
       });
     }
 
-    // ---- OAuth Flow: Step 1 ------------------------------------------------
     // Redirect the user to GitHub with a state parameter to prevent CSRF.
-    if (url.pathname === '/api/auth/github' && request.method === 'POST') {
+    // ---- OAuth Flow: Step 1 ------------------------------------------------
+    // Redirect the user to GitHub with a state parameter to prevent CSRF.
+    if (
+      url.pathname === '/api/auth/github' &&
+      (request.method === 'GET' || request.method === 'POST')
+    ) {
       const state = crypto.randomUUID();
-      const redirect = `https://github.com/login/oauth/authorize?client_id=${env.GITHUB_CLIENT_ID}&redirect_uri=${env.GITHUB_REDIRECT_URI}&scope=user:email&state=${state}`;
-      const headers = new Headers({ Location: redirect });
-      headers.append('Set-Cookie', `oauth_state=${state}; HttpOnly; Path=/; Secure; SameSite=Lax`);
+      const redirect = `https://github.com/login/oauth/authorize` +
+                       `?client_id=${env.GITHUB_CLIENT_ID}` +
+                       `&redirect_uri=${env.GITHUB_REDIRECT_URI}` +
+                       `&scope=user:email&state=${state}`;
+    
+      const headers = new Headers({
+        Location: redirect,
+        'Set-Cookie': `oauth_state=${state}; HttpOnly; Path=/; Secure; SameSite=Lax`,
+      });
+    
       return new Response(null, { status: 302, headers });
     }
+
 
     // ---- OAuth Flow: Step 2 ------------------------------------------------
     // GitHub redirects back here with the "code" which we exchange for
