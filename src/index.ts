@@ -82,11 +82,11 @@ async function handleAuthStart(request: Request, env: Env): Promise<Response> {
   // Two cookies: oauth_state + oauth_next
   headers.append(
     'Set-Cookie',
-    `oauth_state=${state}; HttpOnly; Path=/; Secure; SameSite=Lax; Max-Age=300`
+    `oauth_state=${state}; HttpOnly; Path=/; Secure; SameSite=None; Max-Age=300`
   );
   headers.append(
     'Set-Cookie',
-    `oauth_next=${encodeURIComponent(next)}; HttpOnly; Path=/; Secure; SameSite=Lax; Max-Age=300`
+    `oauth_next=${encodeURIComponent(next)}; HttpOnly; Path=/; Secure; SameSite=None; Max-Age=300`
   );
 
   return new Response(null, { status: 302, headers });
@@ -128,13 +128,13 @@ async function handleAuthCallback(request: Request, env: Env, url: URL): Promise
     
     const headers = new Headers();
     headers.append('Set-Cookie',
-      `session=${sessionId}; HttpOnly; Path=/; Secure; SameSite=Lax; Max-Age=${60*60*24*30}`
+      `session=${sessionId}; HttpOnly; Path=/; Secure; SameSite=None; Max-Age=${60*60*24*30}`
     );
     headers.append('Set-Cookie',
-      'oauth_state=; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=0'
+      'oauth_state=; Path=/; Secure; HttpOnly; SameSite=None; Max-Age=0'
     );
     headers.append('Set-Cookie',
-      'oauth_next=; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=0'
+      'oauth_next=; Path=/; Secure; HttpOnly; SameSite=None; Max-Age=0'
     );
     
     // Redirect back to task page
@@ -185,7 +185,7 @@ async function handleLogout(request: Request, env: Env): Promise<Response> {
   const cookies = parseCookies(request.headers.get('Cookie') || '');
   if (cookies.session) await env.SESSIONS.delete(cookies.session);
   const headers = new Headers({
-    'Set-Cookie': 'session=; HttpOnly; Path=/; Secure; SameSite=Lax; Max-Age=0',
+    'Set-Cookie': 'session=; HttpOnly; Path=/; Secure; SameSite=None; Max-Age=0',
     'Cache-Control': 'no-store',
   });
   return new Response(null, { status: 204, headers });
