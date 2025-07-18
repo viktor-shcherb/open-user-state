@@ -313,6 +313,9 @@ function handlePreflight(request: Request): Response {
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
+    const hdrTag = 'X-Worker-Build';
+    const buildStamp = 'build-2025-07-18a'; // change each deploy for certainty
+    
     const { method, pathname } = { method: request.method, pathname: url.pathname };
     let res: Response | null = null;
 
@@ -340,7 +343,10 @@ export default {
       res = handlePreflight(request);
     }
 
-    if (res) return withCors(request, res);
-    return withCors(request, jsonError(404, 'NOT_FOUND'));
+    if (!res) {
+      res = jsonError(404, 'NOT_FOUND');
+    }
+    res.headers.set(hdrTag, buildStamp);
+    return withCors(request, res);
   },
 };
