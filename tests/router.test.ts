@@ -38,4 +38,20 @@ describe('worker routes', () => {
     const cookie = res.headers.get('Set-Cookie');
     expect(cookie).toMatch(/oauth_state=/);
   });
+
+  it('returns 401 when PAT decryption fails', async () => {
+    const env = {
+      ...baseEnv,
+      ENCRYPTION_SECRET: 'secret',
+      USER_PAT_STORE: { get: async () => 'bad' } as any,
+      USER_REPO_STORE: { get: async () => 'owner/repo' } as any,
+      SESSIONS: { get: async () => ({ id: '1', login: 'u' }) } as any,
+    } as any;
+
+    const req = new Request('https://host/api/file?path=a', {
+      headers: { Cookie: 'session=x' },
+    });
+    const res = await worker.fetch(req, env);
+    expect(res.status).toBe(401);
+  });
 });
