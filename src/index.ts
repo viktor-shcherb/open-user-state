@@ -238,7 +238,7 @@ async function listFiles(
 // profile. Only the user id and login are returned for session creation.
 async function authenticateWithGitHub(
   code: string,
-  env: Env,
+  env: Env
 ): Promise<{ id: string; login: string }> {
   const params = new URLSearchParams({
     client_id: env.GITHUB_CLIENT_ID,
@@ -247,22 +247,51 @@ async function authenticateWithGitHub(
     redirect_uri: env.GITHUB_REDIRECT_URI,
   });
 
-  const tokenRes = await fetch('https://github.com/login/oauth/access_token', {
-    method: 'POST',
-    headers: { Accept: 'application/json' },
-    body: params,
-  });
-  const tokenData = await tokenRes.json<any>();
-  const accessToken = tokenData.access_token;
-  if (!accessToken) throw new Error('no access token');
+  // 1. Exchange code -> access token
+  const tokenRes = await fetch(
+    'https://github.com/login/oauth/access_token',
+    {
+      method: 'POST',
+      headers: {
+        'Accept': 'application/json',
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: params,
+    }
+  );
 
+  if (!tokenRes.ok) {
+    throw new Error(`token exchange failed: ${tokenRes.status}`);
+  }
+
+  const tokenData = await tokenRes.json<{
+    access_token?: string;
+    error?: string;
+    error_description?: string;
+  }>();
+
+  if (tokenData.error || !tokenData.access_token) {
+    throw new Error(`GitHub OAuth error: ${tokenData.error_description || 'unknown'}`);
+  }
+
+  // 2. Fetch the user profile
   const userRes = await fetch('https://api.github.com/user', {
-    headers: { Authorization: `Bearer ${accessToken}`, 'User-Agent': 'open-user-state' },
+    headers: {
+      'Authorization': `Bearer ${tokenData.access_token}`,
+      'Accept': 'application/vnd.github+json',
+      'X-GitHub-Api-Version': '2022-11-28',
+      'User-Agent': 'open-user-state',    
+    },
   });
-  if (!userRes.ok) throw new Error('user fetch failed');
-  const user = await userRes.json<any>();
+
+  if (!userRes.ok) {
+    throw new Error(`user fetch failed: ${userRes.status}`);
+  }
+
+  const user = await userRes.json<{ id: number; login: string }>();
   return { id: String(user.id), login: user.login };
 }
+
 
 // ---- Request Router -------------------------------------------------------
 // Handles all HTTP endpoints required by the frontend. The router is kept
