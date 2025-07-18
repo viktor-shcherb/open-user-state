@@ -10,3 +10,7 @@ kv_namespaces = [
 
 [observability.logs]
 enabled = true
+
+[vars]  # default (a.k.a. “dev”)
+GITHUB_CLIENT_ID = "Ov23liFRU2GYxAyhNmTb"
+GITHUB_REDIRECT_URI = "https://open-user-state-personal-website.viktoroo-sch.workers.dev/api/auth/github/callback"
