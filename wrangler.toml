@@ -3,7 +3,7 @@
 # -------------------------------
 main = "src/index.ts"
 compatibility_date = "2024-05-25"
-node_compat = true         
+nodejs_compat = true         
 workers_dev = false       
 
 [observability.logs]
