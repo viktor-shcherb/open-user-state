@@ -1,42 +1,47 @@
-name = "open-user-state-personal-website"   # production script
+# -------------------------------
+# Global (shared build settings)
+# -------------------------------
 main = "src/index.ts"
 compatibility_date = "2024-05-25"
-nodejs_compat = true
-workers_dev = true        # prod will have workers.dev URL
+node_compat = true         
+workers_dev = false       
 
 [observability.logs]
 enabled = true
 
-####################################
-# Production (root) – vars & KVs
-####################################
-# (If you prefer, you can move these into [env.production] instead; then remove from root.)
+# ======================================================
+# Production Environment (explicit)
+# Deploy with: wrangler deploy --env production
+# ======================================================
+[env.production]
+name = "open-user-state-personal-website"
+workers_dev = true         
 
-[[kv_namespaces]]
-binding    = "USER_PAT_STORE"
-id         = "8b99c8c064fc4eadb803d6018f4516b9"
+[[env.production.kv_namespaces]]
+binding = "USER_PAT_STORE"
+id      = "8b99c8c064fc4eadb803d6018f4516b9"
 
-[[kv_namespaces]]
-binding    = "USER_REPO_STORE"
-id         = "3ba5ec05252d481388ab12ef71d28f56"
+[[env.production.kv_namespaces]]
+binding = "USER_REPO_STORE"
+id      = "3ba5ec05252d481388ab12ef71d28f56"
 
-[[kv_namespaces]]
-binding    = "SESSIONS"
-id         = "bb9d2ee7778841588128d1b9367def84"
+[[env.production.kv_namespaces]]
+binding = "SESSIONS"
+id      = "bb9d2ee7778841588128d1b9367def84"
 
-# (Root vars for production)
-[vars]
-RUNTIME_ENV        = "production"
-FRONTEND_ORIGIN    = "https://viktor-shcherb.github.io"
-GITHUB_CLIENT_ID   = "Ov23liFRU2GYxAyhNmTb"
+[env.production.vars]
+RUNTIME_ENV         = "production"
+FRONTEND_ORIGIN     = "https://viktor-shcherb.github.io"
+GITHUB_CLIENT_ID    = "Ov23liFRU2GYxAyhNmTb"
 GITHUB_REDIRECT_URI = "https://open-user-state-personal-website.viktoroo-sch.workers.dev/api/auth/github/callback"
 
-####################################
-# Development environment
-####################################
+# ======================================================
+# Development Environment
+# Deploy with: wrangler deploy --env dev
+# ======================================================
 [env.dev]
 name = "open-user-state-personal-website-dev"
-workers_dev = true       # dev workers.dev URL enabled
+workers_dev = true          # keep preview URL for dev
 
 [[env.dev.kv_namespaces]]
 binding = "USER_PAT_STORE"
@@ -51,7 +56,7 @@ binding = "SESSIONS"
 id      = "94045e87f8c44af2b237345d4c02ee46"
 
 [env.dev.vars]
-RUNTIME_ENV        = "dev"
-FRONTEND_ORIGIN    = "http://localhost:4000"
-GITHUB_CLIENT_ID   = "Ov23liBELtLNvMl3UBWN"
+RUNTIME_ENV         = "dev"
+FRONTEND_ORIGIN     = "http://localhost:4000"
+GITHUB_CLIENT_ID    = "Ov23liBELtLNvMl3UBWN"
 GITHUB_REDIRECT_URI = "https://open-user-state-personal-website-dev.viktoroo-sch.workers.dev/api/auth/github/callback"
