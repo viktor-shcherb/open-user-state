@@ -36,6 +36,7 @@ High‑level overview of notable files. **Update this list whenever files are ad
 - `src/auth.ts` – OAuth flow, session lookup and PAT encryption helpers.
 - `src/repo.ts` – persistence of user repository preferences and repo creation.
 - `src/files.ts` – wrappers around the GitHub contents API.
+- `src/errors.ts` – helper for structured JSON error responses.
 - `tests/cookie.test.ts` – unit tests for `parseCookies` from `src/auth.ts`.
 - `tests/encryption.test.ts` – tests `encryptPAT` and `decryptPAT` helpers from `src/auth.ts`.
 - `tests/router.test.ts` – integration tests for the worker routes defined in `src/index.ts`.
