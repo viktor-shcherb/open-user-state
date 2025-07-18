@@ -1,0 +1,27 @@
+name: Deploy Workers
+
+on:
+  push:
+    tags: [ 'v*.*.*' ]   # semantic version tags trigger prod deploy
+  workflow_dispatch:
+
+jobs:
+  deploy-prod:
+    if: github.ref_type == 'tag' && startsWith(github.ref_name, 'v')
+    runs-on: ubuntu-latest
+    environment: production       # (Optional GitHub Environment for manual approval)
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify tag matches SemVer
+        run: |
+          if [[ ! "${GITHUB_REF_NAME}" =~ ^v[0-9]+(\.[0-9]+){2}$ ]]; then
+            echo "Tag ${GITHUB_REF_NAME} not semver (vX.Y.Z)"; exit 1;
+          fi
+      - name: Deploy PROD
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CF_API_TOKEN }}
+          accountId: ${{ secrets.CF_ACCOUNT_ID }}
+          command: wrangler deploy --env production --quiet
