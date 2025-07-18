@@ -35,6 +35,7 @@ import {
 } from './auth';
 import { storeRepo, getRepo } from './repo';
 import { sanitizePath, commitFile, readFile, listFiles } from './files';
+import { jsonError } from './errors';
 
 /* -------------------------------------------------------------------------- */
 /* Utility to attach CORS headers to every response                           */
@@ -80,15 +81,15 @@ async function handleAuthCallback(request: Request, env: Env, url: URL): Promise
   const error = params.get('error');
   const cookies = parseCookies(request.headers.get('Cookie') || '');
 
-  if (error) return new Response(`GitHub error: ${error}`, { status: 400 });
+  if (error) return jsonError(400, 'GITHUB_ERROR');
   if (!code || !state || !cookies.oauth_state) {
-    return new Response('Missing OAuth values', { status: 400 });
+    return jsonError(400, 'MISSING_OAUTH');
   }
 
   const buf1 = new TextEncoder().encode(cookies.oauth_state);
   const buf2 = new TextEncoder().encode(state);
   if (!timingSafeEqual(buf1, buf2)) {
-    return new Response('Invalid OAuth state', { status: 400 });
+    return jsonError(400, 'INVALID_OAUTH_STATE');
   }
 
   try {
@@ -113,21 +114,21 @@ async function handleAuthCallback(request: Request, env: Env, url: URL): Promise
 
 async function handleStoreToken(request: Request, env: Env): Promise<Response> {
   const user = await getSessionUser(request, env);
-  if (!user) return new Response('Unauthorized', { status: 401 });
+  if (!user) return jsonError(401, 'UNAUTHORIZED');
 
   let body: { pat?: string };
   try {
     body = await request.json();
   } catch {
-    return new Response('Bad Request', { status: 400 });
+    return jsonError(400, 'BAD_REQUEST');
   }
 
   const pat = (body.pat || '').trim();
   if (pat.length === 0 || pat.length > 256) {
-    return new Response('Invalid token length', { status: 400 });
+    return jsonError(400, 'INVALID_TOKEN_LENGTH');
   }
   if (!/^((gh[pous]_|github_pat_)[A-Za-z0-9_]{20,}|[0-9a-f]{40})$/.test(pat)) {
-    return new Response('Malformed token', { status: 400 });
+    return jsonError(400, 'MALFORMED_TOKEN');
   }
 
   const verify = await fetch('https://api.github.com/user', {
@@ -138,9 +139,9 @@ async function handleStoreToken(request: Request, env: Env): Promise<Response> {
       'X-GitHub-Api-Version': '2022-11-28',
     },
   });
-  if (verify.status === 401) return new Response('Token not authorised', { status: 401 });
-  if (verify.status === 403) return new Response('GitHub rate limited; try later', { status: 429 });
-  if (!verify.ok) return new Response('GitHub check failed', { status: 502 });
+  if (verify.status === 401) return jsonError(401, 'TOKEN_UNAUTHORIZED');
+  if (verify.status === 403) return jsonError(429, 'RATE_LIMIT');
+  if (!verify.ok) return jsonError(502, 'GITHUB_CHECK_FAILED');
 
   await storeToken(user.id, pat, env);
   return new Response(null, { status: 204, headers: { 'Cache-Control': 'no-store' } });
@@ -158,18 +159,18 @@ async function handleLogout(request: Request, env: Env): Promise<Response> {
 
 async function handleSetRepo(request: Request, env: Env): Promise<Response> {
   const user = await getSessionUser(request, env);
-  if (!user) return new Response('Unauthorized', { status: 401 });
+  if (!user) return jsonError(401, 'UNAUTHORIZED');
 
   let body: any;
   try {
     body = await request.json();
   } catch {
-    return new Response('Bad Request', { status: 400 });
+    return jsonError(400, 'BAD_REQUEST');
   }
 
   const repo = (body?.repo || '').trim();
   if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) {
-    return new Response('Invalid repository', { status: 400 });
+    return jsonError(400, 'INVALID_REPO');
   }
 
   await storeRepo(user.id, repo, env);
@@ -178,7 +179,7 @@ async function handleSetRepo(request: Request, env: Env): Promise<Response> {
 
 async function handleGetRepo(request: Request, env: Env): Promise<Response> {
   const user = await getSessionUser(request, env);
-  if (!user) return new Response('Unauthorized', { status: 401 });
+  if (!user) return jsonError(401, 'UNAUTHORIZED');
 
   const repo = await getRepo(user.id, env);
   return new Response(JSON.stringify({ repo }), {
@@ -188,26 +189,26 @@ async function handleGetRepo(request: Request, env: Env): Promise<Response> {
 
 async function handleCommitFile(request: Request, env: Env): Promise<Response> {
   const user = await getSessionUser(request, env);
-  if (!user) return new Response('Unauthorized', { status: 401 });
+  if (!user) return jsonError(401, 'UNAUTHORIZED');
 
   const [token, repo] = await Promise.all([
     getToken(user.id, env).catch(() => null),
     getRepo(user.id, env),
   ]);
-  if (!token || !repo) return new Response('No repository or token', { status: 400 });
+  if (!token || !repo) return jsonError(400, 'MISSING_REPO_OR_TOKEN');
 
   let body: any;
   try {
     body = await request.json();
   } catch {
-    return new Response('Bad Request', { status: 400 });
+    return jsonError(400, 'BAD_REQUEST');
   }
 
   const path = sanitizePath(body?.path);
   const content = body?.content;
   const message = (body?.message || `Add ${path}`).slice(0, 200);
   if (!path || typeof content !== 'string') {
-    return new Response('Invalid payload', { status: 400 });
+    return jsonError(400, 'INVALID_PAYLOAD');
   }
 
   try {
@@ -221,20 +222,20 @@ async function handleCommitFile(request: Request, env: Env): Promise<Response> {
 
 async function handleReadFile(request: Request, env: Env, url: URL): Promise<Response> {
   const user = await getSessionUser(request, env);
-  if (!user) return new Response('Unauthorized', { status: 401 });
+  if (!user) return jsonError(401, 'UNAUTHORIZED');
 
   const [token, repo] = await Promise.all([
     getToken(user.id, env).catch(() => null),
     getRepo(user.id, env),
   ]);
-  if (!token || !repo) return new Response('No repository or token', { status: 400 });
+  if (!token || !repo) return jsonError(400, 'MISSING_REPO_OR_TOKEN');
 
   const path = sanitizePath(url.searchParams.get('path'));
-  if (!path) return new Response('Invalid path', { status: 400 });
+  if (!path) return jsonError(400, 'INVALID_PATH');
 
   try {
     const text = await readFile(repo, path, token);
-    if (text === null) return new Response('Not Found', { status: 404 });
+    if (text === null) return jsonError(404, 'NOT_FOUND');
     return new Response(JSON.stringify({ content: text }), {
       headers: {
         'Content-Type': 'application/json',
@@ -248,17 +249,17 @@ async function handleReadFile(request: Request, env: Env, url: URL): Promise<Res
 
 async function handleListFiles(request: Request, env: Env, url: URL): Promise<Response> {
   const user = await getSessionUser(request, env);
-  if (!user) return new Response('Unauthorized', { status: 401 });
+  if (!user) return jsonError(401, 'UNAUTHORIZED');
 
   const [token, repo] = await Promise.all([
     getToken(user.id, env).catch(() => null),
     getRepo(user.id, env),
   ]);
-  if (!token || !repo) return new Response('No repository or token', { status: 400 });
+  if (!token || !repo) return jsonError(400, 'MISSING_REPO_OR_TOKEN');
 
   const rawDir = (url.searchParams.get('path') || '').trim();
   const dir = rawDir === '' ? '' : sanitizePath(rawDir);
-  if (dir === null) return new Response('Invalid path', { status: 400 });
+  if (dir === null) return jsonError(400, 'INVALID_PATH');
 
   try {
     const entries = await listFiles(repo, dir, token);
@@ -323,6 +324,6 @@ export default {
     }
 
     if (res) return withCors(request, res);
-    return withCors(request, new Response('Not Found', { status: 404 }));
+    return withCors(request, jsonError(404, 'NOT_FOUND'));
   },
 };
