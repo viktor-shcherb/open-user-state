@@ -191,11 +191,17 @@ async function handleCommitFile(request: Request, env: Env): Promise<Response> {
   const user = await getSessionUser(request, env);
   if (!user) return jsonError(401, 'UNAUTHORIZED');
 
-  const [token, repo] = await Promise.all([
-    getToken(user.id, env).catch(() => null),
-    getRepo(user.id, env),
-  ]);
-  if (!token || !repo) return jsonError(400, 'MISSING_REPO_OR_TOKEN');
+   try {
+    const [token, repo] = await Promise.all([
+      getToken(user.id, env),
+      getRepo(user.id, env),
+    ]);
+    if (!token || !repo) return jsonError(400, 'MISSING_REPO_OR_TOKEN');
+  } catch {
+    // User session is valid but the PAT failed to decrypt. Return 401
+    // so the client can prompt for a new token instead of showing 400.
+    return jsonError(401, 'UNAUTHORIZED');
+  }
 
   let body: any;
   try {
@@ -224,11 +230,17 @@ async function handleReadFile(request: Request, env: Env, url: URL): Promise<Res
   const user = await getSessionUser(request, env);
   if (!user) return jsonError(401, 'UNAUTHORIZED');
 
-  const [token, repo] = await Promise.all([
-    getToken(user.id, env).catch(() => null),
-    getRepo(user.id, env),
-  ]);
-  if (!token || !repo) return jsonError(400, 'MISSING_REPO_OR_TOKEN');
+  try {
+    const [token, repo] = await Promise.all([
+      getToken(user.id, env),
+      getRepo(user.id, env),
+    ]);
+    if (!token || !repo) return jsonError(400, 'MISSING_REPO_OR_TOKEN');
+  } catch {
+    // User session is valid but the PAT failed to decrypt. Return 401
+    // so the client can prompt for a new token instead of showing 400.
+    return jsonError(401, 'UNAUTHORIZED');
+  }
 
   const path = sanitizePath(url.searchParams.get('path'));
   if (!path) return jsonError(400, 'INVALID_PATH');
@@ -250,12 +262,17 @@ async function handleReadFile(request: Request, env: Env, url: URL): Promise<Res
 async function handleListFiles(request: Request, env: Env, url: URL): Promise<Response> {
   const user = await getSessionUser(request, env);
   if (!user) return jsonError(401, 'UNAUTHORIZED');
-
-  const [token, repo] = await Promise.all([
-    getToken(user.id, env).catch(() => null),
-    getRepo(user.id, env),
-  ]);
-  if (!token || !repo) return jsonError(400, 'MISSING_REPO_OR_TOKEN');
+  
+  try {
+    const [token, repo] = await Promise.all([
+      getToken(user.id, env),
+      getRepo(user.id, env),
+    ]);
+    if (!token || !repo) return new Response('No repository or token', { status: 400 });
+  } catch {
+    // The encrypted PAT could not be decrypted, likely due to tampering.
+    return jsonError(401, 'UNAUTHORIZED');
+  }
 
   const rawDir = (url.searchParams.get('path') || '').trim();
   const dir = rawDir === '' ? '' : sanitizePath(rawDir);
