@@ -1,6 +1,4 @@
-# .github/workflows/deploy.yml
 name: Deploy Worker
-
 on:
   push:
     branches: [ dev, master ]
@@ -12,22 +10,25 @@ permissions:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    concurrency:
-      group: worker-deploy-${{ github.ref_name }}
-      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
 
-      - name: Deploy (select env)
-        uses: cloudflare/wrangler-action@v3
-        with:
-            apiToken: ${{ secrets.CF_API_TOKEN }}
-            accountId: ${{ secrets.CF_ACCOUNT_ID }}
-            command: |
-              if [ "${{ github.ref_name }}" = "dev" ]; then
-                echo "Deploying DEV environment"
-                wrangler deploy --env dev
-              else
-                echo "Deploying PRODUCTION environment"
-                wrangler deploy --env production
-              fi
+      - name: Install Wrangler (pin a version)
+        run: npm install --no-save wrangler@3.90.0
+
+      - name: Deploy (branch-based)
+        env:
+          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+        run: |
+          echo "Branch: $GITHUB_REF_NAME"
+          if [ "$GITHUB_REF_NAME" = "dev" ]; then
+            echo "Deploying DEV"
+            npx wrangler deploy --env dev
+          elif [ "$GITHUB_REF_NAME" = "master" ]; then
+            echo "Deploying PRODUCTION"
+            npx wrangler deploy --env production
+          else
+            echo "No deploy rule for branch $GITHUB_REF_NAME"
+            exit 0
+          fi
