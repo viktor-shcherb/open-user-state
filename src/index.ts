@@ -22,6 +22,8 @@ export interface Env {
   USER_PAT_STORE: KVNamespace;
   /** KV namespace for persisting user repository preferences */
   USER_REPO_STORE: KVNamespace;
+  /** KV namespace for keeping track of user session cookies */
+  SESSIONS: KVNamespace;
 }
 
 // ---- Cookie Utilities ------------------------------------------------------
