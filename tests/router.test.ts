@@ -76,4 +76,22 @@ describe('worker routes', () => {
       repo: 'owner/repo',
     });
   });
+
+  it('deletes the stored PAT', async () => {
+    let removed = '';
+    const env = {
+      ...baseEnv,
+      FRONTEND_ORIGIN: 'https://host',
+      USER_PAT_STORE: { delete: async (id: string) => { removed = id; } } as any,
+      SESSIONS: { get: async () => ({ id: '1', login: 'user' }) } as any,
+    } as any;
+
+    const req = new Request('https://host/api/token', {
+      method: 'DELETE',
+      headers: { Cookie: 'session=x', Origin: 'https://host' },
+    });
+    const res = await worker.fetch(req, env);
+    expect(res.status).toBe(204);
+    expect(removed).toBe('1');
+  });
 });
