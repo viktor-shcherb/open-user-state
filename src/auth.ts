@@ -114,6 +114,13 @@ export async function storeToken(
   await env.USER_PAT_STORE.put(userId, enc);
 }
 
+// Remove the stored PAT for the given user. The worker keeps no
+// other reference so deleting the KV entry fully revokes backend
+// access until a new token is supplied.
+export async function deleteToken(userId: string, env: Env): Promise<void> {
+  await env.USER_PAT_STORE.delete(userId);
+}
+
 export async function getToken(userId: string, env: Env): Promise<string | null> {
   const enc = await env.USER_PAT_STORE.get(userId);
   return enc ? decryptPAT(enc, env.ENCRYPTION_SECRET) : null;

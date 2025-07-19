@@ -31,6 +31,7 @@ import {
   parseCookies,
   getSessionUser,
   storeToken,
+  deleteToken,
   getToken,
   authenticateWithGitHub,
   timingSafeEqual,
@@ -208,6 +209,15 @@ async function handleStoreToken(request: Request, env: Env): Promise<Response> {
   if (!verify.ok) return jsonError(502, 'GITHUB_CHECK_FAILED');
 
   await storeToken(user.id, pat, env);
+  return new Response(null, { status: 204, headers: { 'Cache-Control': 'no-store' } });
+}
+
+// Remove the saved PAT so subsequent API calls fail until the user
+// provides a new token.
+async function handleDeleteToken(request: Request, env: Env): Promise<Response> {
+  const user = await getSessionUser(request, env);
+  if (!user) return jsonError(401, 'UNAUTHORIZED');
+  await deleteToken(user.id, env);
   return new Response(null, { status: 204, headers: { 'Cache-Control': 'no-store' } });
 }
 

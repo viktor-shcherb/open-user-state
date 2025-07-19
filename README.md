@@ -106,6 +106,11 @@ await fetch('/api/token', {
 The token will be encrypted and stored securely in the worker's `user-pat-store`
 KV namespace.
 
+### `DELETE /api/token`
+
+Removes the stored PAT for the current session. Subsequent file or repository
+operations will fail until a new token is provided.
+
 ### `POST /api/logout`
 
 Clears the active session cookie on the server so subsequent requests are
