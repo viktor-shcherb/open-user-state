@@ -460,6 +460,10 @@ export default {
       res = await handleAuthCallback(request, env, url);
     } else if (pathname === '/api/token' && method === 'POST') {
       res = await handleStoreToken(request, env);
+    } else if (pathname === '/api/token' && method === 'DELETE') {
+      // Remove the user's saved personal access token so any repository
+      // operations fail until a new token is provided.
+      res = await handleDeleteToken(request, env);
     } else if (pathname === '/api/logout' && method === 'POST') {
       res = await handleLogout(request, env);
     } else if (pathname === '/api/repository' && method === 'POST') {
