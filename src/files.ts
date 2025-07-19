@@ -29,6 +29,9 @@ async function blobSha(content: string): Promise<string> {
 }
 
 // ---- Path sanitisation -----------------------------------------------------
+// Basic validation for user supplied paths. Reject absolute paths or anything
+// containing `..` so repository operations can't escape the intended folder
+// structure.
 export function sanitizePath(raw: unknown): string | null {
   const path = (typeof raw === 'string' ? raw : '').trim();
   const ok =

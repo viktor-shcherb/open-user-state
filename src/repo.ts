@@ -30,6 +30,7 @@ export async function ensureRepoExists(repo: string, token: string): Promise<voi
     headers: { Authorization: `Bearer ${token}`, 'User-Agent': 'open-user-state' },
   });
   if (check.status === 404) {
+    // Lazily create the repository to keep the setup flow minimal for the user.
     const userRes = await fetch('https://api.github.com/user', {
       headers: { Authorization: `Bearer ${token}`, 'User-Agent': 'open-user-state' },
     });
