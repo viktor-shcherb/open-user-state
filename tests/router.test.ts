@@ -54,4 +54,26 @@ describe('worker routes', () => {
     const res = await worker.fetch(req, env);
     expect(res.status).toBe(401);
   });
+
+  it('returns profile information', async () => {
+    const env = {
+      ...baseEnv,
+      USER_PAT_STORE: { get: async () => null } as any,
+      USER_REPO_STORE: { get: async () => 'owner/repo' } as any,
+      SESSIONS: { get: async () => ({ id: '1', login: 'user' }) } as any,
+    } as any;
+
+    const req = new Request('https://host/api/profile', {
+      headers: { Cookie: 'session=x' },
+    });
+    const res = await worker.fetch(req, env);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).toEqual({
+      username: 'user',
+      avatar: '',
+      patValid: false,
+      repo: 'owner/repo',
+    });
+  });
 });

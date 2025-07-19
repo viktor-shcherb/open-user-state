@@ -25,6 +25,8 @@ export function parseCookies(header: string | null): Record<string, string> {
   return out;
 }
 
+// Compare two byte arrays without leaking early mismatch information.
+// This avoids timing attacks when validating OAuth state.
 export function timingSafeEqual(a: Uint8Array, b: Uint8Array): boolean {
   if (a.length !== b.length) return false;
   let diff = 0;
@@ -50,6 +52,8 @@ const SALT_LEN = 16;
 const IV_LEN = 12;
 
 async function deriveKey(secret: string, salt: Uint8Array): Promise<CryptoKey> {
+  // Stretch the shared secret using PBKDF2 so compromised
+  // data in KV can't be decrypted with a simple brute force.
   const baseKey = await crypto.subtle.importKey(
     'raw',
     new TextEncoder().encode(secret),
@@ -67,6 +71,8 @@ async function deriveKey(secret: string, salt: Uint8Array): Promise<CryptoKey> {
 }
 
 export async function encryptPAT(pat: string, secret: string): Promise<string> {
+  // Each token is encrypted with a unique salt and IV so repeating
+  // the same PAT produces different ciphertext.
   const salt = crypto.getRandomValues(new Uint8Array(SALT_LEN));
   const iv = crypto.getRandomValues(new Uint8Array(IV_LEN));
   const key = await deriveKey(secret, salt);
@@ -93,6 +99,7 @@ export async function decryptPAT(data: string, secret: string): Promise<string> 
     const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, cipher);
     return new TextDecoder().decode(plain);
   } catch {
+    // Return a generic failure so callers don't learn anything about the secret.
     throw new Error('auth fail');
   }
 }

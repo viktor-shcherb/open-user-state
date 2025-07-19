@@ -73,6 +73,8 @@ function withCors(request: Request, response: Response, env: Env): Response {
   return response;
 }
 
+// Reject cross-origin state-changing requests. GET requests are always allowed
+// so the worker can host public resources like health checks.
 function enforceOrigin(request: Request, env: Env): Response | null {
   const method = request.method;
   if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') return null;
@@ -249,6 +251,49 @@ async function handleGetRepo(request: Request, env: Env): Promise<Response> {
   });
 }
 
+// ---------------------------------------------------------------------------
+// Return basic profile information for the authenticated user. This reaches
+// out to GitHub using the stored PAT to verify the token and fetch the avatar
+// URL. When no valid token is present the avatar field is empty and
+// `patValid` is false. The selected repository is returned regardless.
+async function handleGetProfile(request: Request, env: Env): Promise<Response> {
+  const user = await getSessionUser(request, env);
+  if (!user) return jsonError(401, 'UNAUTHORIZED');
+
+  const [token, repo] = await Promise.all([
+    getToken(user.id, env),
+    getRepo(user.id, env),
+  ]);
+
+  let avatar = '';
+  let patValid = false;
+  if (token) {
+    const check = await fetch('https://api.github.com/user', {
+      headers: { Authorization: `Bearer ${token}`, 'User-Agent': 'open-user-state' },
+    });
+    if (check.ok) {
+      const data = await check.json<any>();
+      avatar = data.avatar_url as string;
+      patValid = true;
+    } else if (check.status === 401 || check.status === 403) {
+      patValid = false;
+    } else {
+      return jsonError(502, 'GITHUB_CHECK_FAILED');
+    }
+  }
+
+  const body = {
+    username: user.login,
+    avatar,
+    patValid,
+    repo: repo || null,
+  };
+
+  return new Response(JSON.stringify(body), {
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
+
 async function handleCommitFile(request: Request, env: Env): Promise<Response> {
   const user = await getSessionUser(request, env);
   if (!user) return jsonError(401, 'UNAUTHORIZED');
@@ -411,6 +456,8 @@ export default {
       res = await handleSetRepo(request, env);
     } else if (pathname === '/api/repository' && method === 'GET') {
       res = await handleGetRepo(request, env);
+    } else if (pathname === '/api/profile' && method === 'GET') {
+      res = await handleGetProfile(request, env);
     } else if (pathname === '/api/file' && method === 'POST') {
       res = await handleCommitFile(request, env);
     } else if (pathname === '/api/file' && method === 'GET') {

@@ -40,6 +40,17 @@ Vitest expects a Node runtime that exposes the standard `webcrypto` API on
 `globalThis.crypto` (Node 18+). When running on older versions the tests will
 shim the API automatically.
 
+## OAuth & State Storage
+
+Users authenticate via GitHub OAuth. The worker stores a short session
+identifier in `SESSIONS` once the callback exchange succeeds. Subsequent
+requests use this cookie to look up the GitHub `login` and numeric `id`.
+
+A separate `POST /api/token` call persists a fine grained PAT encrypted in the
+`USER_PAT_STORE` namespace. Repository preferences are saved per user in
+`USER_REPO_STORE`. Editor state is committed as plain text files; each file is
+written individually and overwrites any existing blob at that path.
+
 <!--
   The API Endpoints section catalogs each HTTP route exposed by the worker
   so the frontend knows how to authenticate and store user state.
@@ -52,13 +63,16 @@ with GitHub, store a Personal Access Token (PAT) and manage the repository
 where user state is kept.
 ### `GET /api/health`
 
-Returns a small JSON payload `{ status: 'ok' }` which can be used by the frontend to verify that the backend is running.
+Returns a small JSON payload `{ status: 'ok' }` which can be used by the
+frontend to verify that the backend is running. A `HEAD` request returns the
+same headers without the body.
 
 
-### `POST /api/auth/github`
+### `GET|POST /api/auth/github`
 
-Initiates the OAuth login flow. The backend responds with a redirect to
-GitHub. From the browser you can trigger the flow with:
+Initiates the OAuth login flow. The backend responds with a redirect to GitHub
+and accepts both `GET` and `POST` methods. From the browser you can trigger the
+flow with:
 
 ```ts
 await fetch('/api/auth/github', { method: 'POST', credentials: 'include' })
@@ -92,6 +106,11 @@ await fetch('/api/token', {
 The token will be encrypted and stored securely in the worker's `user-pat-store`
 KV namespace.
 
+### `POST /api/logout`
+
+Clears the active session cookie on the server so subsequent requests are
+unauthenticated.
+
 ### `POST /api/repository`
 
 Persists the GitHub repository where user state files will be written. The body
@@ -103,21 +122,34 @@ cookie.
 Returns the currently selected repository for the authenticated user in the form
 `{ repo: string }`.
 
+### `GET /api/profile`
+
+Returns `{ username, avatar, patValid, repo }` for the authenticated user.
+`patValid` indicates whether the stored PAT successfully fetches the account
+information from GitHub.
+
 ### `POST /api/file`
 
-Commits a new text file to the selected repository. The JSON payload should
-include `path`, `content` and optionally a `message` used as the commit
-message. If the repository does not exist, it will be created automatically
-before committing the file.
+Commits a text file to the selected repository. The JSON payload should include
+`path`, `content` and optionally a commit `message`. The file is created if it
+does not exist or overwritten when the contents differ. The repository will be
+created automatically if missing.
 
 ### `GET /api/file`
 
 Retrieves the raw text at the given `path` from the selected repository. The
 path is provided as a query parameter. When the file or repository is missing
-`content` will be `null` in the response.
+the response is `404`.
 
 ### `GET /api/files`
 
-Lists the files under a directory in the selected repository. Pass the
-`path` query parameter to specify the directory (or omit for the repo root).
-The response is an array like `{ files: string[] }` containing the entry names.
+Lists the entries under a directory in the selected repository. Pass the `path`
+query parameter to specify the directory (or omit for the repo root). The
+response is an array like `{ files: string[] }` containing file and folder
+names.
+
+## Error Codes
+
+All error responses use the JSON shape `{ "error": "CODE" }`. Consult
+[docs/errors.md](docs/errors.md) for a list of possible codes and the routes
+that may produce them.

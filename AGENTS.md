@@ -32,6 +32,7 @@ High‑level overview of notable files. **Update this list whenever files are ad
 - `README.md` – project overview, development instructions and API description.
 - `LICENSE` – license terms.
 - `docs/security.md` – security considerations for handling Personal Access Tokens.
+- `docs/errors.md` – list of API error codes and affected routes.
 - `src/index.ts` – Cloudflare Worker entry point that wires together the helper modules.
 - `src/auth.ts` – OAuth flow, session lookup and PAT encryption helpers.
 - `src/repo.ts` – persistence of user repository preferences and repo creation.
